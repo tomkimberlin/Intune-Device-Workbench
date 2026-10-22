@@ -14,8 +14,8 @@ Thanks for helping improve Intune Device Workbench.
 The project targets Windows PowerShell 7 and WPF. Demo mode and the test suite are offline and do not require a tenant:
 
 ```powershell
-pwsh.exe -NoLogo -NoProfile -STA -File .\M365Workbench.ps1 -DemoMode
-pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-M365Workbench.ps1
+pwsh.exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode
+pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-IntuneDeviceWorkbench.ps1
 ```
 
 ## Pull requests

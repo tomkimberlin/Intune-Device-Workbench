@@ -60,7 +60,7 @@ Copy-Item .\M365Workbench.settings.example.psd1 .\M365Workbench.settings.psd1
 Replace the fictional tenant domain, tenant object ID, and expected administrator UPN in `M365Workbench.settings.psd1`, then launch:
 
 ```powershell
-.\Launch-M365Workbench.cmd
+.\Launch-IntuneDeviceWorkbench.cmd
 ```
 
 To install a desktop shortcut with the application icon and no console flash:
@@ -69,7 +69,7 @@ To install a desktop shortcut with the application icon and no console flash:
 pwsh.exe -NoLogo -NoProfile -File .\Install-DesktopShortcut.ps1
 ```
 
-The `M365Workbench.*` script, settings and launcher filenames and Windows app identity are retained for upgrade compatibility. Update an existing checkout in place to keep its shortcuts working; rerun the shortcut installer for the new display name.
+Older `M365Workbench.ps1`, `Launch-M365Workbench.cmd`, and `Tests/Test-M365Workbench.ps1` entry points forward to the renamed commands. Existing settings, internal module/asset filenames, launcher storage and Windows app identity stay compatible. Update an existing checkout in place to keep its shortcuts working; rerun the shortcut installer for the new display name.
 
 The app reuses Microsoft Graph's secure `CurrentUser` token cache when a valid delegated context already exists. If sign-in is required, it displays a device code and opens Microsoft's sign-in page in the default browser.
 
@@ -89,7 +89,7 @@ These settings control that behavior:
 Demo mode is entirely local. It does not load a settings file, authenticate, or call Microsoft Graph.
 
 ```powershell
-pwsh.exe -NoLogo -NoProfile -STA -File .\M365Workbench.ps1 -DemoMode
+pwsh.exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode
 ```
 
 Off-screen preview rendering requires `-DemoMode`; live tenant data cannot be exported through the preview switch.
@@ -151,7 +151,7 @@ See the [September 2026 audit notes](docs/AUDIT-2026-09-05.md) for fixed issues,
 The [September 22 quality review](docs/QC-2026-09-22.md) covers recovery-card layout, large-inventory filtering, empty inventories, and expired sign-in handling.
 
 ```powershell
-pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-M365Workbench.ps1
+pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-IntuneDeviceWorkbench.ps1
 ```
 
 ## Project scope

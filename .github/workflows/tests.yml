@@ -18,12 +18,12 @@ jobs:
 
       - name: Run offline PowerShell tests
         shell: pwsh
-        run: .\Tests\Test-M365Workbench.ps1
+        run: .\Tests\Test-IntuneDeviceWorkbench.ps1
 
       - name: Render synthetic demo preview
         shell: pwsh
         run: |
-          pwsh.exe -NoLogo -NoProfile -NonInteractive -STA -File .\M365Workbench.ps1 -DemoMode -RenderPreviewPath "$env:RUNNER_TEMP\device-recovery.png"
+          pwsh.exe -NoLogo -NoProfile -NonInteractive -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode -RenderPreviewPath "$env:RUNNER_TEMP\device-recovery.png"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save synthetic demo preview for visual review

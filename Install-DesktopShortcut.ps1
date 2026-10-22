@@ -4,7 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$appPath = Join-Path $PSScriptRoot 'M365Workbench.ps1'
+$appPath = Join-Path $PSScriptRoot 'IntuneDeviceWorkbench.ps1'
 $iconPath = Join-Path $PSScriptRoot 'assets\M365Workbench.ico'
 $shellIdentityPath = Join-Path $PSScriptRoot 'assets\WindowsShellIdentity.cs'
 $launcherBuildPath = Join-Path $PSScriptRoot 'assets\Build-Launcher.ps1'

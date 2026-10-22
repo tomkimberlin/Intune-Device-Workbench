@@ -4,7 +4,7 @@ Describe the operator workflow or defect addressed by this change.
 
 ## Validation
 
-- [ ] I ran `pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-M365Workbench.ps1`.
+- [ ] I ran `pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-IntuneDeviceWorkbench.ps1`.
 - [ ] I tested UI changes in `-DemoMode`.
 - [ ] I added or updated offline tests where appropriate.
 

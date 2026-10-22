@@ -3,8 +3,8 @@
 Use a new checkout of the reviewed commit from https://github.com/tomkimberlin/Intune-Device-Workbench. Keep any existing checkout and ignored settings file in place. Use synthetic demo data throughout this checklist.
 
 ```powershell
-pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-M365Workbench.ps1
-pwsh.exe -NoLogo -NoProfile -STA -File .\M365Workbench.ps1 -DemoMode
+pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-IntuneDeviceWorkbench.ps1
+pwsh.exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode
 ```
 
 ## Interactive checks

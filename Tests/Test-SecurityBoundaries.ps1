@@ -1,4 +1,4 @@
-# Runs inside Test-M365Workbench.ps1. All Graph data and secrets below are synthetic.
+# Runs inside Test-IntuneDeviceWorkbench.ps1. All Graph data and secrets below are synthetic.
 function Get-OperationFixture {
     param([string]$Name)
     $assignment = $mainAst.Find({

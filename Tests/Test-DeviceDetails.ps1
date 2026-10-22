@@ -76,6 +76,18 @@
     Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged() -and [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount -eq $before) -Name 'Details cleanup cannot erase clipboard content subsequently written by another app'
 }
 
+# Compatibility aliases must forward the same CLI contract to the renamed implementation.
+& {
+    $tokens=$null; $errors=$null
+    $legacyPath=Join-Path $appRoot 'M365Workbench.ps1'
+    $legacyAst=[Management.Automation.Language.Parser]::ParseFile($legacyPath,[ref]$tokens,[ref]$errors)
+    $actualParameters=@($mainAst.ParamBlock.Parameters | ForEach-Object {$_.Name.VariablePath.UserPath}) -join ','
+    $legacyParameters=@($legacyAst.ParamBlock.Parameters | ForEach-Object {$_.Name.VariablePath.UserPath}) -join ','
+    Assert-True -Condition ($errors.Count -eq 0 -and $actualParameters -eq $legacyParameters -and $legacyAst.Extent.Text.Contains("'IntuneDeviceWorkbench.ps1'") -and $legacyAst.Extent.Text.Contains('@PSBoundParameters')) -Name 'Legacy PowerShell entry point parses and forwards every supported argument to the current app'
+    $legacyLauncher=[IO.File]::ReadAllText((Join-Path $appRoot 'Launch-M365Workbench.cmd'))
+    Assert-True -Condition ($legacyLauncher.Contains('Launch-IntuneDeviceWorkbench.cmd') -and $legacyLauncher.Contains('exit /b %errorlevel%')) -Name 'Legacy command launcher forwards to the current launcher and preserves failure status'
+}
+
 # Real WPF layout and accessibility metadata, without showing a window or writing the clipboard.
 & {
     $xamlAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true)
