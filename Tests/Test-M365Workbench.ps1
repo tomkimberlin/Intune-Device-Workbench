@@ -224,7 +224,7 @@ catch [ArgumentException] {
     $invalidWindowRejected = $true
 }
 Assert-True -Condition $invalidWindowRejected -Name 'Windows verification rejects an invalid owner window before native activation'
-Assert-True -Condition (Test-Path -LiteralPath $iconPath -PathType Leaf) -Name 'M365 Workbench icon asset exists'
+Assert-True -Condition (Test-Path -LiteralPath $iconPath -PathType Leaf) -Name 'Intune Device Workbench icon asset exists'
 $iconFrameCount = 0
 if (Test-Path -LiteralPath $iconPath -PathType Leaf) {
     $iconBytes = [IO.File]::ReadAllBytes($iconPath)
@@ -267,7 +267,7 @@ $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($env:M365WB_IDENTITY_SHORTCUT)
 $shortcut.TargetPath = $env:M365WB_IDENTITY_TARGET
 $shortcut.WorkingDirectory = $env:M365WB_IDENTITY_ROOT
-$shortcut.Description = 'M365 Workbench identity test'
+$shortcut.Description = 'Intune Device Workbench identity test'
 $shortcut.IconLocation = "$($env:M365WB_IDENTITY_TARGET),0"
 $shortcut.Save()
 $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
@@ -302,15 +302,17 @@ finally {
     }
 }
 $actualShortcutAppId = [M365Workbench.WindowsShellIdentity]::GetShortcutAppId($shortcutIdentityTestPath)
-Assert-Equal -Actual $actualShortcutAppId -Expected $expectedAppUserModelId -Name 'Windows shortcut stores the dedicated M365 Workbench AppUserModelID'
+Assert-Equal -Actual $actualShortcutAppId -Expected $expectedAppUserModelId -Name 'Windows shortcut stores the dedicated Intune Device Workbench AppUserModelID'
 
 $mainSource = [IO.File]::ReadAllText($mainScriptPath)
+$CopyDeviceDetailsButton = [pscustomobject]@{IsEnabled=$false}
 . (Join-Path $PSScriptRoot 'Test-Quality.ps1')
 . (Join-Path $PSScriptRoot 'Test-Workflow.ps1')
 . (Join-Path $PSScriptRoot 'Test-InventoryRefresh.ps1')
 . (Join-Path $PSScriptRoot 'Test-SecurityBoundaries.ps1')
 . (Join-Path $PSScriptRoot 'Test-PrimaryUsers.ps1')
 . (Join-Path $PSScriptRoot 'Test-Scrolling.ps1')
+. (Join-Path $PSScriptRoot 'Test-DeviceDetails.ps1')
 $settingsExampleSource = [IO.File]::ReadAllText((Join-Path $appRoot 'M365Workbench.settings.example.psd1'))
 $fixtureDeviceNames = @($mainAst.FindAll({param($node) $node -is [Management.Automation.Language.HashtableAst]},$true) | ForEach-Object {
     $pairs=@($_.KeyValuePairs | Where-Object {$_.Item1 -is [Management.Automation.Language.StringConstantExpressionAst]})
@@ -326,9 +328,9 @@ Assert-True -Condition ($fixtureDeviceNames.Count -gt 0 -and @($fixtureDeviceNam
 Assert-True -Condition ($fixtureSerialNumbers.Count -gt 0 -and @($fixtureSerialNumbers | Where-Object { -not $_.StartsWith('DEMO-SERIAL-') }).Count -eq 0) -Name 'Every embedded serial-number fixture is unmistakably synthetic'
 Assert-True -Condition ((Test-Path -LiteralPath $licensePath -PathType Leaf) -and [IO.File]::ReadAllText($licensePath).StartsWith('MIT License')) -Name 'Repository includes the MIT License'
 Assert-True -Condition ((Test-Path -LiteralPath $readmePath -PathType Leaf) -and (Test-Path -LiteralPath $securityPolicyPath -PathType Leaf)) -Name 'Public README and security policy are present'
-Assert-True -Condition ($mainSource.Contains('M365 Workbench') -and -not $mainSource.Contains('Entra + Intune Console')) -Name 'Application identity uses M365 Workbench throughout the UI'
+Assert-True -Condition ($mainSource.Contains('Intune Device Workbench') -and -not $mainSource.Contains('Entra + Intune Console')) -Name 'Application identity uses Intune Device Workbench throughout the UI'
 Assert-True -Condition ($mainSource.IndexOf('if ($DemoMode) {', [StringComparison]::Ordinal) -lt $mainSource.IndexOf("elseif (Test-Path -LiteralPath `$settingsPath -PathType Leaf)", [StringComparison]::Ordinal)) -Name 'Demo mode always uses synthetic settings even when a local tenant file exists'
-Assert-True -Condition ($mainSource.Contains("`$appUserModelId = '$expectedAppUserModelId'") -and $mainSource.Contains('[M365Workbench.WindowsShellIdentity]::SetCurrentProcessAppId($appUserModelId)') -and $mainSource.Contains('[M365Workbench.WindowsShellIdentity]::SetWindowAppId($windowHandle, $appUserModelId)')) -Name 'Running WPF process and window use the dedicated M365 Workbench AppUserModelID'
+Assert-True -Condition ($mainSource.Contains("`$appUserModelId = '$expectedAppUserModelId'") -and $mainSource.Contains('[M365Workbench.WindowsShellIdentity]::SetCurrentProcessAppId($appUserModelId)') -and $mainSource.Contains('[M365Workbench.WindowsShellIdentity]::SetWindowAppId($windowHandle, $appUserModelId)')) -Name 'Running WPF process and window use the dedicated Intune Device Workbench AppUserModelID'
 Assert-True -Condition ($mainSource.Contains('x:Name="EntraOnlyFilterContainer"') -and $mainSource.Contains('x:Name="EntraOnlyCheckBox"') -and $mainSource.Contains('Style="{StaticResource FilterCheckBox}"') -and $mainSource.Contains('ManagementStateDescription')) -Name 'Entra-only and recovery-ready options use the same checkbox filter pattern'
 Assert-True -Condition (-not $mainSource.Contains('ManagementFilterButton') -and -not $mainSource.Contains('$OnlyReadyCheckBox.IsChecked = $false')) -Name 'Checkbox filters combine independently without hidden mutual exclusion'
 Assert-True -Condition ($mainSource.Contains('x:Name="DeviceTableOutline"') -and $mainSource.Contains('x:Name="DeviceCellFrame"') -and $mainSource.Contains('GridLinesVisibility="None"') -and $mainSource.Contains('BorderBrush="#D8E1EC"') -and $mainSource.Contains('BorderThickness="0,0,1,0"')) -Name 'Every device cell owns a deterministic right separator independent of DataGrid focus state'
@@ -443,7 +445,7 @@ Assert-True -Condition ($mainSource.Contains('x:Name="CancelVerificationButton"'
 Assert-True -Condition ($mainSource.Contains('KeyboardNavigation.TabNavigation="Cycle"') -and $mainSource.Contains('KeyboardNavigation.DirectionalNavigation="Cycle"') -and $mainSource.Contains('AutomationProperties.LiveSetting="Polite"') -and $mainSource.Contains("`$AuthOverlay.Visibility -eq 'Visible'")) -Name 'Verification overlay traps keyboard navigation, announces status, and suppresses background shortcuts'
 Assert-True -Condition ($mainSource.Contains("if (`$operationName -eq 'MicrosoftVerification') {") -and $mainSource.Contains('[M365Workbench.Security.SecureClipboard]::ClearIfUnchanged()') -and $mainSource.Contains('$script:LastDeviceCode = $null')) -Name 'Device codes are cleared from the protected clipboard on terminal verification paths'
 $shortcutInstallerSource = [IO.File]::ReadAllText($shortcutInstallerPath)
-Assert-True -Condition ($shortcutInstallerSource.Contains('M365 Workbench.lnk') -and $shortcutInstallerSource.Contains('$shortcut.IconLocation = "$launcherPath,0"')) -Name 'Desktop shortcut uses the M365 Workbench name and embedded launcher icon'
+Assert-True -Condition ($shortcutInstallerSource.Contains('Intune Device Workbench.lnk') -and $shortcutInstallerSource.Contains('$shortcut.IconLocation = "$launcherPath,0"')) -Name 'Desktop shortcut uses the Intune Device Workbench name and embedded launcher icon'
 Assert-True -Condition ($shortcutInstallerSource.Contains("`$appUserModelId = '$expectedAppUserModelId'") -and $shortcutInstallerSource.Contains('[M365Workbench.WindowsShellIdentity]::SetShortcutAppId($shortcutPath, $appUserModelId)')) -Name 'Desktop shortcut and running app share one Windows shell identity'
 Assert-True -Condition ($shortcutInstallerSource.Contains('M365Workbench.Launcher.exe') -and -not $shortcutInstallerSource.Contains('$shortcut.TargetPath = $powerShellAlias')) -Name 'Desktop shortcut starts through the no-console GUI launcher'
 Assert-True -Condition (-not $mainSource.Contains('Reachability') -and -not $mainSource.Contains('Header="Online"')) -Name 'Application does not infer device online status outside Intune and Entra data'

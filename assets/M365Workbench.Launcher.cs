@@ -14,13 +14,13 @@ namespace M365Workbench
             {
                 if (args == null || args.Length != 1)
                 {
-                    throw new InvalidOperationException("The M365 Workbench script path was not supplied.");
+                    throw new InvalidOperationException("The Intune Device Workbench script path was not supplied.");
                 }
 
                 string scriptPath = Path.GetFullPath(args[0]);
                 if (!File.Exists(scriptPath))
                 {
-                    throw new FileNotFoundException("M365 Workbench could not be found.", scriptPath);
+                    throw new FileNotFoundException("Intune Device Workbench could not be found.", scriptPath);
                 }
 
                 string powerShellPath = ResolvePowerShell();
@@ -42,7 +42,7 @@ namespace M365Workbench
             {
                 MessageBox.Show(
                     exception.Message,
-                    "M365 Workbench",
+                    "Intune Device Workbench",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
                 return 1;
@@ -75,7 +75,7 @@ namespace M365Workbench
                 }
                 catch (ArgumentException) { }
             }
-            throw new FileNotFoundException("PowerShell 7.4 or newer is required. Install PowerShell, then open M365 Workbench again.");
+            throw new FileNotFoundException("PowerShell 7.4 or newer is required. Install PowerShell, then open Intune Device Workbench again.");
         }
     }
 }

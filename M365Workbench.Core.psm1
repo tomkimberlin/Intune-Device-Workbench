@@ -98,21 +98,46 @@ function ConvertTo-DisplayDate {
     return $date.ToLocalTime().ToString('MMM d, yyyy h:mm tt')
 }
 
-function ConvertTo-FriendlyComplianceState {
-    param(
-        [AllowNull()]
-        [object]$Value
-    )
+function Get-DeviceCompliancePresentation {
+    param([AllowNull()][object]$Value)
 
-    switch (([string]$Value).ToLowerInvariant()) {
-        'compliant' { return 'Compliant' }
-        'noncompliant' { return 'Not compliant' }
-        'conflict' { return 'Conflict' }
-        'error' { return 'Error' }
-        'ingraceperiod' { return 'Grace period' }
-        'unknown' { return 'Unknown' }
-        default { return 'Unknown' }
+    $text = 'Unknown'
+    $foreground = '#64748B'
+    $background = '#F1F5F9'
+    switch (([string]$Value).Trim().ToLowerInvariant()) {
+        'compliant' { $text = 'Compliant'; $foreground = '#15803D'; $background = '#ECFDF3' }
+        'noncompliant' { $text = 'Not compliant'; $foreground = '#B42318'; $background = '#FEF3F2' }
+        'conflict' { $text = 'Conflict'; $foreground = '#B45309'; $background = '#FFFBEB' }
+        'error' { $text = 'Error'; $foreground = '#B42318'; $background = '#FEF3F2' }
+        'ingraceperiod' { $text = 'Grace period'; $foreground = '#B45309'; $background = '#FFFBEB' }
     }
+    [pscustomobject]@{ Text = $text; Foreground = $foreground; Background = $background }
+}
+
+function ConvertTo-FriendlyComplianceState {
+    param([AllowNull()][object]$Value)
+    return (Get-DeviceCompliancePresentation -Value $Value).Text
+}
+
+function Format-DeviceDetails {
+    param([AllowNull()][object]$Device)
+
+    if ($null -eq $Device) { return $null }
+    # An explicit allowlist keeps recovery material out even if the row grows.
+    $fields = [ordered]@{
+        'Device' = [string](Get-PropertyValue $Device 'DeviceName')
+        'Primary user' = [string](Get-PropertyValue $Device 'PrimaryUser')
+        'UPN' = [string](Get-PropertyValue $Device 'UserPrincipalName')
+        'Serial' = [string](Get-PropertyValue $Device 'SerialNumber')
+        'OS' = (([string](Get-PropertyValue $Device 'OperatingSystem') + ' ' + [string](Get-PropertyValue $Device 'OSVersion')).Trim())
+    }
+    $lines = foreach ($field in $fields.GetEnumerator()) {
+        # Keep untrusted metadata on one line; remove invisible formatting controls.
+        $value = [regex]::Replace([string]$field.Value, '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', ' ').Trim()
+        if ([string]::IsNullOrWhiteSpace($value) -or $value -eq [string][char]0x2014) { $value = 'Unavailable' }
+        '{0}: {1}' -f $field.Key, $value
+    }
+    return $lines -join [Environment]::NewLine
 }
 
 function ConvertTo-BitLockerVolumeDisplay {
@@ -895,6 +920,8 @@ function Get-FriendlyLapsErrorMessage {
 
 Export-ModuleMember -Function @(
     'ConvertFrom-LapsPasswordBase64'
+    'Format-DeviceDetails'
+    'Get-DeviceCompliancePresentation'
     'Get-DeviceAdminPortalUri'
     'Get-DeviceCodeFromMessage'
     'Get-FriendlyLapsErrorMessage'

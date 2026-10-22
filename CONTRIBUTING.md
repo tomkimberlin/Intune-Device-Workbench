@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve M365 Workbench.
+Thanks for helping improve Intune Device Workbench.
 
 ## Before opening an issue
 

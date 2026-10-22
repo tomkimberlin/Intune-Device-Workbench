@@ -1,6 +1,6 @@
 # Roadmap
 
-M365 Workbench is a focused desktop app for frequent Microsoft 365 administration workflows that are slow or fragmented across Microsoft's portals. It is not intended to reproduce every portal page.
+Intune Device Workbench is a focused desktop app for frequent Microsoft 365 administration workflows that are slow or fragmented across Microsoft's portals. It is not intended to reproduce every portal page.
 
 ## Principles
 

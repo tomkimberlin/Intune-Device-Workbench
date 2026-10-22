@@ -1,11 +1,11 @@
-# M365 Workbench
+# Intune Device Workbench
 
-<img src="assets/M365Workbench.svg" width="72" alt="M365 Workbench icon">
+<img src="assets/M365Workbench.svg" width="72" alt="Intune Device Workbench icon">
 
-[![Tests](https://github.com/tomkimberlin/m365-workbench/actions/workflows/tests.yml/badge.svg)](https://github.com/tomkimberlin/m365-workbench/actions/workflows/tests.yml)
+[![Tests](https://github.com/tomkimberlin/Intune-Device-Workbench/actions/workflows/tests.yml/badge.svg)](https://github.com/tomkimberlin/Intune-Device-Workbench/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-M365 Workbench is a Windows desktop utility for Microsoft Entra ID and Microsoft Intune support work. The current release provides a searchable Windows device inventory with on-demand Windows LAPS and BitLocker recovery.
+Intune Device Workbench is a LAPS-first Windows desktop utility for Microsoft Entra ID and Microsoft Intune device support. The current release provides a searchable Windows device inventory with on-demand Windows LAPS and BitLocker recovery.
 
 ![Device recovery workspace populated with fictional demo data](docs/device-recovery.png)
 
@@ -13,7 +13,7 @@ M365 Workbench is a Windows desktop utility for Microsoft Entra ID and Microsoft
 
 ## Why I built this
 
-I built M365 Workbench because I find Intune slow, and navigating from one device to another in the portal is painful. I wanted a focused Windows desktop workspace for device inventory, Windows LAPS, and BitLocker recovery, with less time spent moving between portal pages during support work.
+I built Intune Device Workbench because I find Intune slow, and navigating from one device to another in the portal is painful. I wanted a focused Windows desktop workspace for device inventory, Windows LAPS, and BitLocker recovery, with less time spent moving between portal pages during support work.
 
 ## What it does
 
@@ -21,7 +21,8 @@ I built M365 Workbench because I find Intune slow, and navigating from one devic
 - Combines Intune managed-device data with Entra device, Windows LAPS, and BitLocker metadata.
 - Displays actual Intune primary-user assignments; an empty assignment shows Unassigned, never the enrollment user.
 - Identifies Entra-only records without assuming they are stale or safe to delete.
-- Shows device, management, compliance, encryption, sync, and approximate Entra activity details.
+- Shows device, management, compliance, encryption, sync, and approximate Entra activity details, with a compact compliance badge beside the selected device name.
+- Copies the selected device name, actual primary user/UPN, serial number, and OS for a support ticket, without recovery secrets.
 - Preserves sorting and the selected recovery-key record across refreshes; a running refresh can be canceled without losing the previous inventory.
 - Shows a compact BitLocker key ID with the full identifier on hover, and supports typing an ID prefix in the key picker.
 - Opens the selected device directly in the Intune or Entra admin center.
@@ -38,15 +39,15 @@ All screenshots, tests, and demo records use fictional `contoso` identities and 
 - `Microsoft.Graph.Authentication` 2.38.0 or later
 - A Microsoft Entra work or school account in the configured tenant
 
-Both the standard PowerShell installer and Microsoft Store installation are supported. The launcher also checks absolute directories on `PATH`. The window title identifies the current build as `2026.09.29`.
+Both the standard PowerShell installer and Microsoft Store installation are supported. The launcher also checks absolute directories on `PATH`. The window title identifies the current build as `2026.10.22`.
 
 ## Quick start
 
 Clone the repository and install the Graph authentication module:
 
 ```powershell
-git clone https://github.com/tomkimberlin/m365-workbench.git
-Set-Location .\m365-workbench
+git clone https://github.com/tomkimberlin/Intune-Device-Workbench.git
+Set-Location .\Intune-Device-Workbench
 Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
 ```
 
@@ -67,6 +68,8 @@ To install a desktop shortcut with the application icon and no console flash:
 ```powershell
 pwsh.exe -NoLogo -NoProfile -File .\Install-DesktopShortcut.ps1
 ```
+
+The `M365Workbench.*` script, settings and launcher filenames and Windows app identity are retained for upgrade compatibility. Update an existing checkout in place to keep its shortcuts working; rerun the shortcut installer for the new display name.
 
 The app reuses Microsoft Graph's secure `CurrentUser` token cache when a valid delegated context already exists. If sign-in is required, it displays a device code and opens Microsoft's sign-in page in the default browser.
 
@@ -113,7 +116,7 @@ Administrator consent may be required. The signed-in operator must also have dir
 
 ## Security design
 
-M365 Workbench handles privileged recovery material, so its recovery flow is deliberately narrow:
+Intune Device Workbench handles privileged recovery material, so its recovery flow is deliberately narrow:
 
 - Authentication is delegated and interactive; the project includes no unattended privileged identity or credential.
 - Tenant-specific settings are local and ignored by Git.
@@ -139,6 +142,8 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability. Never put production t
 
 ## Tests
 
+See the [Windows smoke-test checklist](docs/WINDOWS-SMOKE-TEST.md) for remaining interactive validation. Automated checks do not establish Windows Hello or production-tenant behavior.
+
 The offline suite parses the PowerShell and WPF markup and validates data joining, authentication-context enforcement, secret decoding, portal-link validation, metadata-only inventory, clipboard protection, the no-console launcher, and key UI regressions. It also executes the production recovery operations with synthetic Graph responses and tests clipboard race/cleanup behavior with native-call shims. It does not connect to Microsoft Graph or overwrite your clipboard. Generated test files are placed in a unique system temporary directory and cleaned up on exit.
 
 See the [September 2026 audit notes](docs/AUDIT-2026-09-05.md) for fixed issues, verification coverage, and remaining limits.
@@ -151,8 +156,8 @@ pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-M365Workbench.ps1
 
 ## Project scope
 
-Entra ID spans identity, access, applications, roles, and device identities. Intune focuses on endpoint and application management. M365 Workbench is intended to grow into focused modules for common support workflows, not reproduce every Microsoft portal or replace Azure Arc, Defender, Configuration Manager, or full server-management tooling.
+Intune Device Workbench focuses on Windows device support: quick access to LAPS passwords, BitLocker recovery, and the device context needed for a support ticket. The Intune and Entra links provide access to less frequent portal tasks.
 
 See [ROADMAP.md](ROADMAP.md) for planned work and [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
 
-M365 Workbench is licensed under the [MIT License](LICENSE). It is not affiliated with or endorsed by Microsoft.
+Intune Device Workbench is licensed under the [MIT License](LICENSE). It is not affiliated with or endorsed by Microsoft.

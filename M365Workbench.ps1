@@ -106,8 +106,8 @@ if ($null -eq ('M365Workbench.Security.WindowsSessionNotifications' -as [type]))
 
 if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne [Threading.ApartmentState]::STA) {
     [System.Windows.MessageBox]::Show(
-        'Start M365 Workbench from its desktop shortcut or Launch-M365Workbench.cmd so PowerShell uses STA mode.',
-        'M365 Workbench',
+        'Start Intune Device Workbench from its desktop shortcut or Launch-M365Workbench.cmd so PowerShell uses STA mode.',
+        'Intune Device Workbench',
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Information
     ) | Out-Null
@@ -117,7 +117,7 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne [Threading.Apartme
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="M365 Workbench · 2026.09.29"
+        Title="Intune Device Workbench · 2026.10.22"
         Width="1280" Height="780" MinWidth="1100" MinHeight="680"
         WindowStartupLocation="CenterScreen"
         Background="#F5F7FB"
@@ -599,7 +599,7 @@ $xaml = @'
           </Viewbox>
         </Border>
         <StackPanel Grid.Column="2" VerticalAlignment="Center">
-          <TextBlock Text="M365 Workbench" FontSize="23" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
+          <TextBlock Text="Intune Device Workbench" FontSize="23" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
           <TextBlock Text="Devices, LAPS, and BitLocker" FontSize="12.5" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
         </StackPanel>
         <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
@@ -906,7 +906,13 @@ $xaml = @'
             </ScrollViewer.Resources>
             <StackPanel Margin="0,0,16,0">
               <StackPanel>
-                <TextBlock x:Name="DetailDeviceName" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"/>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <TextBlock x:Name="DetailDeviceName" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center"/>
+                  <Border x:Name="HeaderComplianceBadge" Grid.Column="1" CornerRadius="9" Padding="6,3" Margin="8,0,0,0" VerticalAlignment="Center" Background="#F1F5F9" ToolTip="Compliance reported by Intune at the last inventory refresh; not a live health check.">
+                    <TextBlock x:Name="HeaderComplianceText" Text="Unknown" FontSize="10.5" FontWeight="SemiBold" Foreground="#64748B" AutomationProperties.Name="Compliance: Unknown"/>
+                  </Border>
+                </Grid>
                 <TextBlock x:Name="DetailPrimaryUser" Foreground="#475569" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap"/>
                 <TextBlock x:Name="DetailUserPrincipalName" Foreground="{StaticResource MutedBrush}" FontSize="11.5" Margin="0,2,0,0" TextWrapping="Wrap"/>
               </StackPanel>
@@ -1032,7 +1038,11 @@ $xaml = @'
 
               <Border BorderBrush="#E8EDF4" BorderThickness="0,1,0,0" Margin="0,15,0,0" Padding="0,13,0,0">
                 <StackPanel>
-                  <TextBlock Text="DEVICE DETAILS" Foreground="#64748B" FontSize="9.5" FontWeight="Bold" Margin="0,0,0,5"/>
+                  <Grid Margin="0,0,0,5">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="DEVICE DETAILS" Foreground="#64748B" FontSize="9.5" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <Button x:Name="CopyDeviceDetailsButton" Grid.Column="1" Content="Copy details" Style="{StaticResource PortalLinkButton}" Padding="7,3" MinHeight="26" IsEnabled="False" ToolTip="Copy device name, primary user/UPN, serial and OS from the current inventory. No recovery secrets. Clipboard clears automatically." AutomationProperties.Name="Copy device details for a support ticket"/>
+                  </Grid>
                   <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
@@ -1134,7 +1144,7 @@ $xaml = @'
             <Button x:Name="OpenSignInButton" Grid.Column="2" Content="Open sign-in page" Style="{StaticResource PrimaryButton}" IsEnabled="False"/>
           </Grid>
           <Button x:Name="CancelVerificationButton" Content="Cancel verification" Style="{StaticResource SecondaryButton}" Height="34" Margin="0,10,0,0" Visibility="Collapsed" AutomationProperties.Name="Cancel Microsoft verification"/>
-          <TextBlock x:Name="AuthOverlayFooter" Text="M365 Workbench continues automatically after sign-in." Foreground="#94A3B8" FontSize="10.5" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center" Margin="20,14,20,0"/>
+          <TextBlock x:Name="AuthOverlayFooter" Text="Intune Device Workbench continues automatically after sign-in." Foreground="#94A3B8" FontSize="10.5" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center" Margin="20,14,20,0"/>
         </StackPanel>
       </Border>
     </Border>
@@ -1162,6 +1172,7 @@ $controlNames = @(
     'EntraOnlyFilterContainer', 'EntraOnlyCheckBox', 'EntraOnlyFilterCount', 'OnlyReadyCheckBox', 'RefreshButton', 'RefreshButtonText', 'RefreshIcon', 'DeviceTableSurface', 'DeviceGrid', 'EmptyState',
     'EmptyStateTitle', 'EmptyStateDescription',
     'LoadingOverlay', 'LoadingText', 'NoSelectionPanel', 'DetailPanel', 'DetailDeviceName',
+    'HeaderComplianceBadge', 'HeaderComplianceText', 'CopyDeviceDetailsButton',
     'DetailPrimaryUser', 'DetailUserPrincipalName', 'DetailLapsBadge', 'DetailLapsDot', 'DetailBitLockerBadge', 'OpenIntuneButton', 'OpenEntraButton', 'EntraOnlyNotice',
     'DetailBitLockerDot', 'DetailBitLockerStatus', 'LapsTabButton', 'BitLockerTabButton', 'LapsRecoveryPanel',
     'BitLockerRecoveryPanel', 'AccountNameText', 'PasswordText',
@@ -1870,6 +1881,28 @@ function Open-DeviceSignInPage {
     Start-Process -FilePath 'rundll32.exe' -ArgumentList 'url.dll,FileProtocolHandler', '"https://login.microsoft.com/device"' | Out-Null
 }
 
+function Copy-SelectedDeviceDetails {
+    $selected = Get-SelectedDevice
+    # A late recovery Copy must never replace the metadata the operator just copied.
+    if ($null -eq $selected -or $null -ne $script:CurrentOperation -or
+        $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) { return }
+
+    try {
+        $text = Format-DeviceDetails -Device $selected
+        [M365Workbench.Security.SecureClipboard]::SetSensitiveText($text, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
+        # Commit tracking only after a successful write, including when a secret was copied before it.
+        $script:ClipboardClearAt = (Get-SensitiveClockNow).AddSeconds([int]$settings.ClipboardClearSeconds)
+        $script:ClipboardDeviceId = $null
+        $script:ClipboardKind = 'DeviceDetails'
+        $script:ClipboardRecoveryKeyId = $null
+        $null = Update-ClipboardStatusForSelection
+        Show-Toast -Message "Device details copied • clipboard clears in $($settings.ClipboardClearSeconds) seconds" -Kind Success
+    }
+    catch {
+        Show-Toast -Message 'The clipboard is busy or unavailable. Try again.' -Kind Error
+    }
+}
+
 function Open-SelectedDevicePortal {
     param(
         [Parameter(Mandatory)]
@@ -2062,6 +2095,7 @@ function Restore-SecretActionControls {
     $selected = Get-SelectedDevice
     $lapsAvailable = $script:IsSignedIn -and $null -ne $selected -and [bool]$selected.LapsAvailable
     $bitLockerAvailable = $script:IsSignedIn -and $null -ne $selected -and [bool]$selected.BitLockerAvailable -and $null -ne $BitLockerKeySelector.SelectedItem
+    $CopyDeviceDetailsButton.IsEnabled = $null -ne $selected
     $CopyPasswordButton.IsEnabled = $lapsAvailable
     $RevealPasswordButton.IsEnabled = $lapsAvailable
     $CopyPasswordButtonText.Text = 'Copy password'
@@ -2096,6 +2130,7 @@ function Set-RecoveryActionFocus {
 function Set-SecretActionBusy {
     param([Parameter(Mandatory)][ValidateSet('LAPS', 'BitLocker')][string]$Kind)
 
+    $CopyDeviceDetailsButton.IsEnabled = $false
     $CopyPasswordButton.IsEnabled = $false
     $RevealPasswordButton.IsEnabled = $false
     $CopyRecoveryKeyButton.IsEnabled = $false
@@ -2359,7 +2394,7 @@ function Start-LocalSecretVerification {
         $script:LocalVerificationCancellation = [Threading.CancellationTokenSource]::new()
         $script:LocalVerificationTask = [M365Workbench.Security.WindowsHelloVerifier]::VerifyAsync(
             $windowHandle,
-            'Verify to access recovery data in M365 Workbench.',
+            'Verify to access recovery data in Intune Device Workbench.',
             [M365Workbench.Security.WindowsHelloVerifier]::DefaultTimeoutMilliseconds,
             $script:LocalVerificationCancellation.Token
         )
@@ -2500,7 +2535,7 @@ function Start-Authentication {
     $AuthOverlayTitle.Text = 'Microsoft sign-in'
     $AuthOverlaySubtitle.Text = 'Connect to load devices'
     $AuthOverlayInstruction.Text = "Use the configured administrator account and follow your organization's sign-in requirements."
-    $AuthOverlayFooter.Text = 'M365 Workbench continues automatically after sign-in.'
+    $AuthOverlayFooter.Text = 'Intune Device Workbench continues automatically after sign-in.'
     $AuthOverlay.Visibility = 'Visible'
     $DeviceCodeText.Text = 'Waiting for Microsoft...'
     $AuthOverlayStatus.Text = 'Checking for a reusable secure sign-in...'
@@ -2603,11 +2638,13 @@ function Update-DetailPanel {
     if ($null -eq $selected) {
         $NoSelectionPanel.Visibility = 'Visible'
         $DetailPanel.Visibility = 'Collapsed'
+        $CopyDeviceDetailsButton.IsEnabled = $false
         return
     }
 
     $NoSelectionPanel.Visibility = 'Collapsed'
     $DetailPanel.Visibility = 'Visible'
+    $CopyDeviceDetailsButton.IsEnabled = $true
     $DetailDeviceName.Text = [string]$selected.DeviceName
     $DetailPrimaryUser.Text = [string]$selected.PrimaryUser
     $DetailUserPrincipalName.Text = [string]$selected.UserPrincipalName
@@ -2678,13 +2715,13 @@ function Update-DetailPanel {
         $DetailLastSync.ToolTip = $null
     }
 
-    switch (([string]$selected.ComplianceState).ToLowerInvariant()) {
-        'compliant' { $DetailComplianceDot.Fill = $brushConverter.ConvertFromString('#15803D') }
-        'noncompliant' { $DetailComplianceDot.Fill = $brushConverter.ConvertFromString('#B42318') }
-        'error' { $DetailComplianceDot.Fill = $brushConverter.ConvertFromString('#B42318') }
-        'conflict' { $DetailComplianceDot.Fill = $brushConverter.ConvertFromString('#D97706') }
-        default { $DetailComplianceDot.Fill = $brushConverter.ConvertFromString('#94A3B8') }
-    }
+    $compliance = Get-DeviceCompliancePresentation -Value $selected.ComplianceState
+    $DetailCompliance.Text = $compliance.Text
+    $DetailComplianceDot.Fill = $brushConverter.ConvertFromString($compliance.Foreground)
+    $HeaderComplianceText.Text = $compliance.Text
+    $HeaderComplianceText.Foreground = $brushConverter.ConvertFromString($compliance.Foreground)
+    $HeaderComplianceBadge.Background = $brushConverter.ConvertFromString($compliance.Background)
+    $HeaderComplianceText.SetValue([System.Windows.Automation.AutomationProperties]::NameProperty, "Compliance: $($compliance.Text)")
 
     $CopyPasswordButton.IsEnabled = [bool]$selected.LapsAvailable -and $script:IsSignedIn
     $RevealPasswordButton.IsEnabled = [bool]$selected.LapsAvailable -and $script:IsSignedIn
@@ -3462,6 +3499,7 @@ $DeviceGrid.Add_PreviewMouseWheel({
     $eventArgs.Handled = $true
 })
 $DeviceGrid.Add_SelectionChanged({ Cancel-PendingRecoveryAction; Update-DetailPanel })
+$CopyDeviceDetailsButton.Add_Click({ Copy-SelectedDeviceDetails })
 $OpenIntuneButton.Add_Click({ Open-SelectedDevicePortal -Portal Intune })
 $OpenEntraButton.Add_Click({ Open-SelectedDevicePortal -Portal Entra })
 $LapsTabButton.Add_Click({ Set-RecoveryTab -Tab 'LAPS' })
@@ -3773,14 +3811,14 @@ $window.Add_Closed({
 catch {
     Add-Type -AssemblyName PresentationFramework
     $safeMessage = if ($script:AppStarted) {
-        'M365 Workbench encountered an unexpected local error. Restart the app and try again.'
+        'Intune Device Workbench encountered an unexpected local error. Restart the app and try again.'
     }
     else {
-        'M365 Workbench could not start. Check that PowerShell 7.4 or newer is installed, the application files are complete, and M365Workbench.settings.psd1 contains valid settings.'
+        'Intune Device Workbench could not start. Check that PowerShell 7.4 or newer is installed, the application files are complete, and M365Workbench.settings.psd1 contains valid settings.'
     }
     [System.Windows.MessageBox]::Show(
         $safeMessage,
-        'M365 Workbench',
+        'Intune Device Workbench',
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Error
     ) | Out-Null
