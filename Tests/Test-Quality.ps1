@@ -49,19 +49,21 @@
         $countsLeft=$counts.TranslatePoint([System.Windows.Point]::new(0,0),$root).X
         Assert-True -Condition ($footerRight -le $countsLeft -and $footer.ToolTip -eq $footer.Text) -Name "Long footer messages cannot overlap counts and remain available as a tooltip at $($size[0])px"
         if ($size[0] -eq 1280) {
-            $qualityWindow.FindName('BitLockerCountdownText').FontSize=10.5
             $qualityWindow.FindName('BitLockerCountdownText').Text='Copied securely • clipboard clears in 45 seconds'
             $qualityWindow.FindName('BitLockerKeyIdText').Text='ID ABCDEF12'
-            foreach ($volume in @('Operating system volume','Fixed data volume','Removable data volume')) {
-                $qualityWindow.FindName('BitLockerVolumeText').Text=$volume
-                $root.Measure([System.Windows.Size]::new($size[0]-16,$size[1]-39))
-                $root.Arrange([System.Windows.Rect]::new(0,0,$size[0]-16,$size[1]-39))
-                $root.UpdateLayout()
-                $copy=$qualityWindow.FindName('CopyRecoveryKeyButton')
-                $panel=$qualityWindow.FindName('DetailPanel')
-                $bottom=$copy.TranslatePoint([System.Windows.Point]::new(0,$copy.ActualHeight),$panel).Y
-                $volumeText=$qualityWindow.FindName('BitLockerVolumeText')
-                Assert-True -Condition ($bottom -le $panel.ActualHeight -and $volumeText.TextWrapping -eq 'NoWrap' -and $volumeText.ToolTip -eq $volume) -Name "BitLocker Copy stays fully visible at the default size with a key ID and $volume (button bottom $bottom; viewport $($panel.ActualHeight))"
+            foreach ($fontSize in @(10.5,13.125)) {
+                $qualityWindow.FindName('BitLockerCountdownText').FontSize=$fontSize
+                foreach ($volume in @('Operating system volume','Fixed data volume','Removable data volume')) {
+                    $qualityWindow.FindName('BitLockerVolumeText').Text=$volume
+                    $root.Measure([System.Windows.Size]::new($size[0]-16,$size[1]-39))
+                    $root.Arrange([System.Windows.Rect]::new(0,0,$size[0]-16,$size[1]-39))
+                    $root.UpdateLayout()
+                    $copy=$qualityWindow.FindName('CopyRecoveryKeyButton')
+                    $panel=$qualityWindow.FindName('DetailPanel')
+                    $bottom=$copy.TranslatePoint([System.Windows.Point]::new(0,$copy.ActualHeight),$panel).Y
+                    $volumeText=$qualityWindow.FindName('BitLockerVolumeText')
+                    Assert-True -Condition ($bottom -le $panel.ActualHeight -and $volumeText.TextWrapping -eq 'NoWrap' -and $volumeText.ToolTip -eq $volume) -Name "BitLocker Copy stays fully visible at the default size at $fontSize pt with a key ID and $volume (button bottom $bottom; viewport $($panel.ActualHeight))"
+                }
             }
         }
         $qualityWindow.Close()

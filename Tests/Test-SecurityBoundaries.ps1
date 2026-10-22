@@ -129,17 +129,20 @@ Assert-True -Condition $ownerRejected -Name 'Clipboard rejects missing owner bef
 # Compile the real clipboard algorithm against deterministic native-call shims.
 # This tests races/OS contention without reading or overwriting the user's clipboard.
 $nativeShims = @{
-    OpenClipboard = 'private static bool OpenClipboard(IntPtr hWndNewOwner) { OpenAttempts++; return !Busy; }'
-    CloseClipboard = 'private static bool CloseClipboard() { if (ReplaceOnClose) { Sequence++; ReplaceOnClose = false; } return true; }'
-    EmptyClipboard = 'private static bool EmptyClipboard() { Sequence++; EmptyCount++; return true; }'
-    SetClipboardData = 'private static IntPtr SetClipboardData(uint uFormat, IntPtr hMem) { Formats.Add(uFormat); if (uFormat == CfUnicodeText) { LastText = Marshal.PtrToStringUni(hMem); } Sequence++; Marshal.FreeHGlobal(hMem); return new IntPtr(1); }'
+    OpenClipboard = 'private static bool OpenClipboard(IntPtr hWndNewOwner) { OpenAttempts++; if (Busy) return false; OpenWindow = hWndNewOwner; if (ReplaceOnOpen) { ReplaceClipboard(); ReplaceOnOpen = false; } return true; }'
+    CloseClipboard = 'private static bool CloseClipboard() { if (SynthesizeOnClose) Sequence += 3; if (ReplaceOnClose) { ReplaceClipboard(); ReplaceOnClose = false; } return true; }'
+    EmptyClipboard = 'private static bool EmptyClipboard() { DropMarker(); Owner = OpenWindow; Sequence++; EmptyCount++; return true; }'
+    SetClipboardData = 'private static IntPtr SetClipboardData(uint uFormat, IntPtr hMem) { Formats.Add(uFormat); if (uFormat == CfUnicodeText) LastText = Marshal.PtrToStringUni(hMem); Sequence++; if (uFormat == 100u) { MarkerHandle = hMem; } else { Allocations.Remove(hMem); Marshal.FreeHGlobal(hMem); } return new IntPtr(1); }'
     RegisterClipboardFormat = 'private static uint RegisterClipboardFormat(string lpszFormat) { return lpszFormat == ExcludeFormatName ? 100u : lpszFormat == HistoryFormatName ? 101u : 102u; }'
     GetClipboardSequenceNumber = 'private static uint GetClipboardSequenceNumber() { return Sequence; }'
+    GetClipboardOwner = 'private static IntPtr GetClipboardOwner() { return Owner; }'
+    GetClipboardData = 'private static IntPtr GetClipboardData(uint format) { return format == 100u ? MarkerHandle : IntPtr.Zero; }'
     IsWindow = 'private static bool IsWindow(IntPtr hWnd) { return hWnd != IntPtr.Zero; }'
-    GlobalAlloc = 'private static IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes) { return Marshal.AllocHGlobal((int)dwBytes.ToUInt64()); }'
+    GlobalAlloc = 'private static IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes) { IntPtr handle = Marshal.AllocHGlobal((int)dwBytes.ToUInt64()); Allocations[handle] = dwBytes.ToUInt64(); return handle; }'
     GlobalLock = 'private static IntPtr GlobalLock(IntPtr hMem) { return hMem; }'
+    GlobalSize = 'private static UIntPtr GlobalSize(IntPtr hMem) { return new UIntPtr(Allocations[hMem]); }'
     GlobalUnlock = 'private static bool GlobalUnlock(IntPtr hMem) { return true; }'
-    GlobalFree = 'private static IntPtr GlobalFree(IntPtr hMem) { Marshal.FreeHGlobal(hMem); return IntPtr.Zero; }'
+    GlobalFree = 'private static IntPtr GlobalFree(IntPtr hMem) { Allocations.Remove(hMem); Marshal.FreeHGlobal(hMem); return IntPtr.Zero; }'
 }
 $clipboardAlgorithm = [IO.File]::ReadAllText($clipboardPath).Replace('namespace M365Workbench.Security', 'namespace M365Workbench.TestDoubles')
 $clipboardAlgorithm = [regex]::Replace($clipboardAlgorithm, '(?s)\[DllImport\([^\]]*\)\]\s*private static extern [^;]+;', {
@@ -154,9 +157,24 @@ public static string LastText;
         public static bool Busy;
         public static int OpenAttempts;
         public static bool ReplaceOnClose;
+        public static bool ReplaceOnOpen;
+        public static bool SynthesizeOnClose;
         public static uint Sequence = 1;
         public static int EmptyCount;
+        public static IntPtr Owner;
+        private static IntPtr OpenWindow;
+        private static IntPtr MarkerHandle;
+        private static System.Collections.Generic.Dictionary<IntPtr, ulong> Allocations = new System.Collections.Generic.Dictionary<IntPtr, ulong>();
         public static System.Collections.Generic.List<uint> Formats = new System.Collections.Generic.List<uint>();
+        private static void DropMarker() {
+            if (MarkerHandle != IntPtr.Zero) { Allocations.Remove(MarkerHandle); Marshal.FreeHGlobal(MarkerHandle); MarkerHandle = IntPtr.Zero; }
+        }
+        public static void ReplaceClipboard(bool sameOwner = false, bool preserveMarker = false) {
+            if (!preserveMarker) DropMarker();
+            if (!sameOwner) Owner = new IntPtr(2);
+            Sequence++;
+        }
+        public static void CorruptMarker() { Marshal.WriteByte(MarkerHandle, (byte)(Marshal.ReadByte(MarkerHandle) ^ 1)); Sequence++; }
         private const uint CfUnicodeText
 '@).Replace('Thread.Sleep(20 + (attempt * 15));', '/* deterministic contention: no real delay */')
 Add-Type -TypeDefinition $clipboardAlgorithm
@@ -165,6 +183,23 @@ Add-Type -TypeDefinition $clipboardAlgorithm
 $emptyCount = [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
 Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged() -and [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount -eq $emptyCount) -Name 'Clipboard algorithm never claims/deletes a replacement arriving immediately after CloseClipboard'
 Assert-Equal -Actual ([M365Workbench.TestDoubles.SecureClipboard]::Formats -join ',') -Expected '100,101,102,13' -Name 'History/cloud exclusions are attached before plaintext clipboard data'
+[M365Workbench.TestDoubles.SecureClipboard]::SynthesizeOnClose = $true
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
+Assert-True -Condition ([M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged()) -Name 'Windows synthesizing formats at CloseClipboard does not prevent owned-item cleanup'
+[M365Workbench.TestDoubles.SecureClipboard]::SynthesizeOnClose = $false
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
+[M365Workbench.TestDoubles.SecureClipboard]::ReplaceOnOpen = $true
+$emptyCount = [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
+Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged() -and [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount -eq $emptyCount) -Name 'Ownership is checked again under the native clipboard lock after an intervening replacement'
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
+[M365Workbench.TestDoubles.SecureClipboard]::ReplaceClipboard($true)
+Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged()) -Name 'A replacement using the same owner window without the per-copy marker is preserved'
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
+[M365Workbench.TestDoubles.SecureClipboard]::CorruptMarker()
+Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged()) -Name 'A mismatching per-copy marker cannot authorize clipboard deletion'
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
+[M365Workbench.TestDoubles.SecureClipboard]::ReplaceClipboard($false, $true)
+Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged()) -Name 'Another owner restoring the same marker cannot be mistaken for the original clipboard write'
 [M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
 [M365Workbench.TestDoubles.SecureClipboard]::Busy = $true
 $busyRejected = $false
