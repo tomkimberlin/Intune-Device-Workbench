@@ -49,6 +49,26 @@
     Assert-Equal -Actual ([M365Workbench.TestDoubles.SecureClipboard]::LastText) -Expected $expected -Name 'Actual copy handler replaces a synthetic secret with only the selected ticket details'
     Assert-True -Condition ($script:ClipboardKind -eq 'DeviceDetails' -and $script:ClipboardClearAt -eq $script:DetailsClock.AddSeconds(45) -and $null -eq $script:ClipboardDeviceId -and $null -eq $script:ClipboardRecoveryKeyId -and $script:DetailsStatusUpdates -eq 1) -Name 'Successful details copy replaces secret cleanup metadata and clears obsolete recovery countdown status'
 
+    # Exercise the production timer: the replaced secret's old deadline must not clear details early.
+    function Process-OperationOutput { }
+    function Set-AppStatus { param($Message) }
+    $script:ToastExpiresAt=[DateTimeOffset]::MinValue
+    $script:CredentialExpiresAt=[DateTimeOffset]::MinValue
+    $script:BitLockerExpiresAt=[DateTimeOffset]::MinValue
+    $PasswordText=[pscustomobject]@{Text='••••••••••••••••'}
+    $BitLockerKeyText=[pscustomobject]@{Text='••••••-••••••'}
+    $tickAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -eq '$pollTimer' -and $n.Member.Extent.Text -eq 'Add_Tick'},$true)
+    $tickBody=$tickAst.Arguments[0].ScriptBlock.Extent.Text
+    $tick=[scriptblock]::Create($tickBody.Substring(1,$tickBody.Length-2).Replace('[M365Workbench.Security.SecureClipboard]','[M365Workbench.TestDoubles.SecureClipboard]'))
+    $before=[M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
+    $script:DetailsClock=$script:DetailsClock.AddSeconds(2)
+    & $tick
+    Assert-Equal -Actual ([M365Workbench.TestDoubles.SecureClipboard]::EmptyCount) -Expected $before -Name 'Production timer ignores the replaced secret deadline after details copying'
+    $script:DetailsClock=$script:DetailsClock.AddSeconds(44)
+    & $tick
+    Assert-True -Condition ([M365Workbench.TestDoubles.SecureClipboard]::EmptyCount -eq $before+1 -and $script:ClipboardClearAt -eq [DateTimeOffset]::MinValue -and $null -eq $script:ClipboardKind) -Name 'Production timer clears owned details at their own deadline and resets tracking'
+    $script:DetailsClock=[DateTimeOffset]::Parse('2026-10-22T12:00:00Z')
+
     # A busy clipboard must preserve an outstanding secret cleanup obligation.
     [M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('SYNTHETIC-OLD-SECRET',[IntPtr]1)
     $script:ClipboardKind='LAPS'; $script:ClipboardClearAt=$script:DetailsClock.AddSeconds(1)
