@@ -43,7 +43,7 @@ $compilerOutput = & $compilerPath `
     '/reference:System.Windows.Forms.dll' `
     $sourcePath 2>&1
 if ($LASTEXITCODE -ne 0) {
-    throw "The M365 Workbench launcher could not be built.`n$($compilerOutput -join [Environment]::NewLine)"
+    throw "The Intune Device Workbench launcher could not be built.`n$($compilerOutput -join [Environment]::NewLine)"
 }
 
 $bytes = [IO.File]::ReadAllBytes($resolvedOutputPath)

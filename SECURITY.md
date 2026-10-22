@@ -8,7 +8,7 @@ Security fixes are applied to the latest version on the `main` branch. There is 
 
 Do not disclose a suspected vulnerability in a public issue, discussion, screenshot, or log attachment.
 
-Use GitHub's [private vulnerability report](https://github.com/tomkimberlin/m365-workbench/security/advisories/new). If private reporting is temporarily unavailable, do not open a public issue containing security details.
+Use GitHub's [private vulnerability report](https://github.com/tomkimberlin/Intune-Device-Workbench/security/advisories/new). If private reporting is temporarily unavailable, do not open a public issue containing security details.
 
 Include the minimum information needed to reproduce the problem. Never submit a real LAPS password, BitLocker recovery key, device code, access token, refresh token, tenant export, production settings file, or screenshot from a production tenant.
 

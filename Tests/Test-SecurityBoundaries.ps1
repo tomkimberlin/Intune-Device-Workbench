@@ -1,4 +1,4 @@
-# Runs inside Test-M365Workbench.ps1. All Graph data and secrets below are synthetic.
+# Runs inside Test-IntuneDeviceWorkbench.ps1. All Graph data and secrets below are synthetic.
 function Get-OperationFixture {
     param([string]$Name)
     $assignment = $mainAst.Find({
@@ -132,7 +132,7 @@ $nativeShims = @{
     OpenClipboard = 'private static bool OpenClipboard(IntPtr hWndNewOwner) { OpenAttempts++; return !Busy; }'
     CloseClipboard = 'private static bool CloseClipboard() { if (ReplaceOnClose) { Sequence++; ReplaceOnClose = false; } return true; }'
     EmptyClipboard = 'private static bool EmptyClipboard() { Sequence++; EmptyCount++; return true; }'
-    SetClipboardData = 'private static IntPtr SetClipboardData(uint uFormat, IntPtr hMem) { Formats.Add(uFormat); Sequence++; Marshal.FreeHGlobal(hMem); return new IntPtr(1); }'
+    SetClipboardData = 'private static IntPtr SetClipboardData(uint uFormat, IntPtr hMem) { Formats.Add(uFormat); if (uFormat == CfUnicodeText) { LastText = Marshal.PtrToStringUni(hMem); } Sequence++; Marshal.FreeHGlobal(hMem); return new IntPtr(1); }'
     RegisterClipboardFormat = 'private static uint RegisterClipboardFormat(string lpszFormat) { return lpszFormat == ExcludeFormatName ? 100u : lpszFormat == HistoryFormatName ? 101u : 102u; }'
     GetClipboardSequenceNumber = 'private static uint GetClipboardSequenceNumber() { return Sequence; }'
     IsWindow = 'private static bool IsWindow(IntPtr hWnd) { return hWnd != IntPtr.Zero; }'
@@ -150,7 +150,8 @@ $clipboardAlgorithm = [regex]::Replace($clipboardAlgorithm, '(?s)\[DllImport\([^
     throw 'Unmapped native call in clipboard test adapter.'
 })
 $clipboardAlgorithm = $clipboardAlgorithm.Replace('private const uint CfUnicodeText', @'
-public static bool Busy;
+public static string LastText;
+        public static bool Busy;
         public static int OpenAttempts;
         public static bool ReplaceOnClose;
         public static uint Sequence = 1;

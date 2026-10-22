@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
-  <title id="title">M365 Workbench</title>
+  <title id="title">Intune Device Workbench</title>
   <desc id="description">A cyan module on a work surface supported by a W-shaped brace.</desc>
   <defs>
     <linearGradient id="background" x1="10" y1="8" x2="54" y2="58" gradientUnits="userSpaceOnUse">

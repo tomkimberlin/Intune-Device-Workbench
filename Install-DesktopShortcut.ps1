@@ -4,14 +4,14 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$appPath = Join-Path $PSScriptRoot 'M365Workbench.ps1'
+$appPath = Join-Path $PSScriptRoot 'IntuneDeviceWorkbench.ps1'
 $iconPath = Join-Path $PSScriptRoot 'assets\M365Workbench.ico'
 $shellIdentityPath = Join-Path $PSScriptRoot 'assets\WindowsShellIdentity.cs'
 $launcherBuildPath = Join-Path $PSScriptRoot 'assets\Build-Launcher.ps1'
 $launcherDirectory = Join-Path $env:LOCALAPPDATA 'M365Workbench'
 $launcherPath = Join-Path $launcherDirectory 'M365Workbench.Launcher.exe'
 $desktopPath = [Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktopPath 'M365 Workbench.lnk'
+$shortcutPath = Join-Path $desktopPath 'Intune Device Workbench.lnk'
 $appUserModelId = 'M365Workbench.Desktop'
 
 if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
@@ -36,7 +36,7 @@ $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $launcherPath
 $shortcut.Arguments = "`"$appPath`""
 $shortcut.WorkingDirectory = $PSScriptRoot
-$shortcut.Description = 'M365 Workbench'
+$shortcut.Description = 'Intune Device Workbench'
 $shortcut.IconLocation = "$launcherPath,0"
 $shortcut.WindowStyle = 1
 $shortcut.Save()
