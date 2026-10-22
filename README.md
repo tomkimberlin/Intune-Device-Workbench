@@ -11,6 +11,14 @@ M365 Workbench is a Windows desktop utility for Microsoft Entra ID and Microsoft
 
 > **Status:** Early release. Device inventory and recovery are functional and covered by offline tests. The app currently performs Microsoft Graph reads only; device actions and other modules remain roadmap items.
 
+## Why I built this
+
+I built M365 Workbench because I find Intune slow, and navigating from one device to another in the portal is painful. I wanted a focused Windows desktop workspace for device inventory, Windows LAPS, and BitLocker recovery, with less time spent moving between portal pages during support work.
+
+## Development disclosure
+
+I used AI to help build M365 Workbench, including its code and documentation.
+
 ## What it does
 
 - Searches Windows devices by name, user, UPN, serial number, model, or Entra device ID.
