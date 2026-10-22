@@ -1,6 +1,7 @@
 # Synthetic-only detail copying and compliance, using the production formatter and clipboard algorithm.
 & {
     $device = [pscustomobject]@{
+        EntraDeviceId='11111111-1111-4111-8111-111111111111'
         DeviceName='DEMO-DEVICE-ALPHA'; PrimaryUser='Ashley Morgan'; UserPrincipalName='ashley.morgan@contoso.com'
         SerialNumber='DEMO-SERIAL-ALPHA'; OperatingSystem='Windows'; OSVersion='10.0.26100'
         Password='MUST-NOT-COPY-PASSWORD'; RecoveryKey='MUST-NOT-COPY-KEY'; Credentials=@('MUST-NOT-COPY-CREDENTIALS')
