@@ -911,7 +911,7 @@ $xaml = @'
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <TextBlock x:Name="DetailDeviceName" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center"/>
                   <Border x:Name="HeaderComplianceBadge" Grid.Column="1" CornerRadius="9" Padding="6,3" Margin="8,0,0,0" VerticalAlignment="Center" Background="#F1F5F9" ToolTip="Compliance reported by Intune at the last inventory refresh; not a live health check.">
-                    <TextBlock x:Name="HeaderComplianceText" Text="Unknown" FontSize="10.5" FontWeight="SemiBold" Foreground="#64748B" AutomationProperties.Name="Compliance: Unknown"/>
+                    <TextBlock x:Name="HeaderComplianceText" Text="Unknown" FontSize="10.5" FontWeight="SemiBold" Foreground="#475569" AutomationProperties.Name="Compliance: Unknown"/>
                   </Border>
                 </Grid>
                 <TextBlock x:Name="DetailPrimaryUser" Foreground="#475569" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap"/>

@@ -102,7 +102,7 @@ function Get-DeviceCompliancePresentation {
     param([AllowNull()][object]$Value)
 
     $text = 'Unknown'
-    $foreground = '#64748B'
+    $foreground = '#475569'
     $background = '#F1F5F9'
     switch (([string]$Value).Trim().ToLowerInvariant()) {
         'compliant' { $text = 'Compliant'; $foreground = '#15803D'; $background = '#ECFDF3' }

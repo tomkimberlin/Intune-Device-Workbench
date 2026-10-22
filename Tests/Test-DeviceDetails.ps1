@@ -21,13 +21,25 @@
     $missing=Format-DeviceDetails ([pscustomobject]@{})
     Assert-True -Condition (($missing -split '\r?\n' | Where-Object {$_ -like '*: Unavailable'}).Count -eq 5) -Name 'Missing and Entra-only metadata are explicitly unavailable rather than invented'
 
+    function Get-ColorLuminance {
+        param([string]$Hex)
+        $channels=@(1,3,5 | ForEach-Object {
+            $value=[Convert]::ToInt32($Hex.Substring($_,2),16)/255.0
+            if ($value -le 0.04045) {$value/12.92} else {[Math]::Pow(($value+0.055)/1.055,2.4)}
+        })
+        return $channels[0]*0.2126+$channels[1]*0.7152+$channels[2]*0.0722
+    }
     foreach ($case in @(
         @('compliant','Compliant','#15803D'), @('noncompliant','Not compliant','#B42318'),
         @('ingraceperiod','Grace period','#B45309'), @('conflict','Conflict','#B45309'), @('error','Error','#B42318'),
-        @($null,'Unknown','#64748B'), @('unknown','Unknown','#64748B'), @('futureState','Unknown','#64748B'), @(' COMPLIANT ','Compliant','#15803D')
+        @($null,'Unknown','#475569'), @('unknown','Unknown','#475569'), @('futureState','Unknown','#475569'), @(' COMPLIANT ','Compliant','#15803D')
     )) {
         $presentation=Get-DeviceCompliancePresentation $case[0]
         Assert-True -Condition ($presentation.Text -eq $case[1] -and $presentation.Foreground -eq $case[2]) -Name "Compliance state '$($case[0])' has explicit text and a conservative color"
+        $foreground=Get-ColorLuminance $presentation.Foreground
+        $background=Get-ColorLuminance $presentation.Background
+        $contrast=([Math]::Max($foreground,$background)+0.05)/([Math]::Min($foreground,$background)+0.05)
+        Assert-True -Condition ($contrast -ge 4.5) -Name "Compliance text contrast is at least 4.5:1 for '$($case[0])'"
     }
 
     # Execute the actual event function against the native-call shim, not the user's clipboard.
