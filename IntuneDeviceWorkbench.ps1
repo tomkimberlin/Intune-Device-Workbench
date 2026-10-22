@@ -3440,7 +3440,16 @@ function Save-WindowPreview {
     $width = [Math]::Max(1, [int][Math]::Ceiling($visual.ActualWidth))
     $height = [Math]::Max(1, [int][Math]::Ceiling($visual.ActualHeight))
     $bitmap = [System.Windows.Media.Imaging.RenderTargetBitmap]::new($width, $height, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32)
-    $bitmap.Render($visual)
+    # The client grid is transparent over the window background in the real UI.
+    $drawing = [System.Windows.Media.DrawingVisual]::new()
+    $context = $drawing.RenderOpen()
+    try {
+        $bounds = [System.Windows.Rect]::new(0, 0, $width, $height)
+        $context.DrawRectangle($window.Background, $null, $bounds)
+        $context.DrawRectangle([System.Windows.Media.VisualBrush]::new($visual), $null, $bounds)
+    }
+    finally { $context.Close() }
+    $bitmap.Render($drawing)
     $encoder = [System.Windows.Media.Imaging.PngBitmapEncoder]::new()
     $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
     $parent = Split-Path -Parent $Path
