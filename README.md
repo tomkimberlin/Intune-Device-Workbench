@@ -7,7 +7,7 @@
 
 Intune Device Workbench is a LAPS-first Windows desktop utility for Microsoft Entra ID and Microsoft Intune device support. The current release provides a searchable Windows device inventory with on-demand Windows LAPS and BitLocker recovery.
 
-![Device recovery workspace populated with fictional demo data](docs/device-recovery.png)
+![LAPS-first device workspace with compliance badge and Copy details, populated with fictional demo data](docs/device-recovery.png)
 
 > **Status:** Early release. Device inventory and recovery are functional and covered by offline tests. The app currently performs Microsoft Graph reads only; device actions and other modules remain roadmap items.
 

@@ -3435,10 +3435,12 @@ function Save-WindowPreview {
     param([Parameter(Mandatory)][string]$Path)
 
     $window.UpdateLayout()
-    $width = [Math]::Max(1, [int][Math]::Ceiling($window.ActualWidth))
-    $height = [Math]::Max(1, [int][Math]::Ceiling($window.ActualHeight))
+    # Render the actual client visual, without the unpainted native window frame.
+    $visual = $window.Content
+    $width = [Math]::Max(1, [int][Math]::Ceiling($visual.ActualWidth))
+    $height = [Math]::Max(1, [int][Math]::Ceiling($visual.ActualHeight))
     $bitmap = [System.Windows.Media.Imaging.RenderTargetBitmap]::new($width, $height, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32)
-    $bitmap.Render($window)
+    $bitmap.Render($visual)
     $encoder = [System.Windows.Media.Imaging.PngBitmapEncoder]::new()
     $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
     $parent = Split-Path -Parent $Path
