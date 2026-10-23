@@ -3446,10 +3446,12 @@ function Save-WindowPreview {
     try {
         $bounds = [System.Windows.Rect]::new(0, 0, $width, $height)
         $context.DrawRectangle($window.Background, $null, $bounds)
-        $context.DrawRectangle([System.Windows.Media.VisualBrush]::new($visual), $null, $bounds)
     }
     finally { $context.Close() }
     $bitmap.Render($drawing)
+    # Render in client coordinates. A VisualBrush auto-fits descendant bounds,
+    # including invisible overflow, which can squeeze the UI and leave a gutter.
+    $bitmap.Render($visual)
     $encoder = [System.Windows.Media.Imaging.PngBitmapEncoder]::new()
     $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
     $parent = Split-Path -Parent $Path

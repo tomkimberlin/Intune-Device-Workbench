@@ -313,6 +313,7 @@ $CopyDeviceDetailsButton = [pscustomobject]@{IsEnabled=$false}
 . (Join-Path $PSScriptRoot 'Test-PrimaryUsers.ps1')
 . (Join-Path $PSScriptRoot 'Test-Scrolling.ps1')
 . (Join-Path $PSScriptRoot 'Test-DeviceDetails.ps1')
+. (Join-Path $PSScriptRoot 'Test-Preview.ps1')
 $settingsExampleSource = [IO.File]::ReadAllText((Join-Path $appRoot 'M365Workbench.settings.example.psd1'))
 $fixtureDeviceNames = @($mainAst.FindAll({param($node) $node -is [Management.Automation.Language.HashtableAst]},$true) | ForEach-Object {
     $pairs=@($_.KeyValuePairs | Where-Object {$_.Item1 -is [Management.Automation.Language.StringConstantExpressionAst]})
