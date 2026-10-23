@@ -105,7 +105,7 @@
     $selected=$device; $script:CurrentOperation=$null; $script:PendingSecretRequest=$null; $script:LocalVerificationTask=$null
     Copy-SelectedDeviceDetails
     $before=[M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
-    [M365Workbench.TestDoubles.SecureClipboard]::Sequence++
+    [M365Workbench.TestDoubles.SecureClipboard]::ReplaceClipboard()
     Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged() -and [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount -eq $before) -Name 'Details cleanup cannot erase clipboard content subsequently written by another app'
 }
 

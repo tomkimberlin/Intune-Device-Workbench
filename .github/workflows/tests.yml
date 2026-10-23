@@ -20,6 +20,12 @@ jobs:
         shell: pwsh
         run: .\Tests\Test-IntuneDeviceWorkbench.ps1
 
+      - name: Verify native clipboard cleanup with synthetic data
+        shell: pwsh
+        run: |
+          pwsh.exe -NoLogo -NoProfile -STA -File .\Tests\Test-NativeClipboard.ps1 -AllowClipboardOverwrite
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Render synthetic demo preview
         shell: pwsh
         run: |

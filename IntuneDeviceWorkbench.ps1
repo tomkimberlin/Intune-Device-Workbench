@@ -1008,7 +1008,7 @@ $xaml = @'
                           IsEnabled="False"
                           ToolTip="Choose a BitLocker recovery-key record"
                           AutomationProperties.Name="BitLocker recovery key record"/>
-                <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="13" Margin="0,9,0,0">
+                <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="13,7" Margin="0,9,0,0">
                   <StackPanel>
                     <Grid>
                       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

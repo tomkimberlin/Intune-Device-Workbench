@@ -7,6 +7,16 @@ pwsh.exe -NoLogo -NoProfile -File .\Tests\Test-IntuneDeviceWorkbench.ps1
 pwsh.exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode
 ```
 
+## Native clipboard regression test
+
+The offline suite never changes your clipboard. For a synthetic test session, this separate opt-in test overwrites it and runs the production demo copy, timer, close and simulated session callbacks against the real Windows clipboard:
+
+```powershell
+pwsh.exe -NoLogo -NoProfile -STA -File .\Tests\Test-NativeClipboard.ps1 -AllowClipboardOverwrite
+```
+
+It waits through the default 45-second deadline, verifies history/cloud exclusion formats, preserves another process's newer text, and holds the native clipboard lock in another process to test cleanup retries. It uses no tenant settings, authentication or real recovery data. It does not perform a real Windows lock/disconnect or establish whether Windows Clipboard History honors the exclusion formats. Temporary helper files are removed on exit.
+
 ## Interactive checks
 
 - Confirm the new window/header name. LAPS and its large Copy password action should remain the main workflow. Check the minimum/default window sizes and normal/enlarged Windows display scaling; long names must not overlap the readable compliance badge. Use Tab, Shift+Tab and a screen reader if available.
@@ -19,7 +29,7 @@ pwsh.exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode
 
 ## Limits and optional authentication check
 
-Windows CI runs the offline suite, real off-screen WPF layout/rendering and launcher checks. Clipboard ownership/races and recovery operations are tested with native-call shims or synthetic Graph responses; they do not establish real clipboard contention, Windows Hello/PIN/biometrics, session transitions or live tenant behavior on your laptop.
+Windows CI runs the offline suite, real off-screen WPF layout/rendering and launcher checks, plus the separate synthetic native clipboard test on its disposable Windows runner. Clipboard races are also tested with native-call shims, and recovery operations use synthetic Graph responses. These tests do not establish Windows Hello/PIN/biometrics, real session transitions, interactive display scaling or live tenant behavior on your laptop.
 
 Windows Hello and Microsoft device-code fallback need Tom's interactive participation and separate explicit approval for any live privileged recovery read. Do not automate a real recovery test, change consent/roles/scopes, perform tenant writes, or collect production secrets/screenshots/logs. Do not assume a device-code sign-in proves MFA; Conditional Access controls that requirement.
 

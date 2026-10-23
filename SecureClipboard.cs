@@ -20,7 +20,8 @@ namespace M365Workbench.Security
         private const string CloudFormatName = "CanUploadToCloudClipboard";
 
         private static readonly object Gate = new object();
-        private static uint _ownedSequence;
+        private static byte[] _ownedMarker;
+        private static IntPtr _ownerWindow;
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool OpenClipboard(IntPtr hWndNewOwner);
@@ -38,7 +39,10 @@ namespace M365Workbench.Security
         private static extern uint RegisterClipboardFormat(string lpszFormat);
 
         [DllImport("user32.dll")]
-        private static extern uint GetClipboardSequenceNumber();
+        private static extern IntPtr GetClipboardOwner();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr GetClipboardData(uint uFormat);
 
         [DllImport("user32.dll")]
         private static extern bool IsWindow(IntPtr hWnd);
@@ -48,6 +52,9 @@ namespace M365Workbench.Security
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr GlobalLock(IntPtr hMem);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern UIntPtr GlobalSize(IntPtr hMem);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool GlobalUnlock(IntPtr hMem);
@@ -74,6 +81,7 @@ namespace M365Workbench.Security
             }
 
             byte[] textBytes = null;
+            byte[] ownershipMarker = null;
             lock (Gate)
             {
                 OpenClipboardWithRetry(ownerWindow);
@@ -84,6 +92,7 @@ namespace M365Workbench.Security
                         throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to clear the clipboard.");
                     }
 
+                    ownershipMarker = RandomNumberGenerator.GetBytes(16);
                     uint excludeFormat = RegisterRequiredFormat(ExcludeFormatName);
                     uint historyFormat = RegisterRequiredFormat(HistoryFormatName);
                     uint cloudFormat = RegisterRequiredFormat(CloudFormatName);
@@ -91,21 +100,25 @@ namespace M365Workbench.Security
                     // Any payload in ExcludeClipboardContentFromMonitorProcessing opts the
                     // entire clipboard item out. The DWORD zero markers provide a second,
                     // explicit opt-out for history and cloud synchronization.
-                    SetClipboardBytes(excludeFormat, new byte[] { 0 });
+                    SetClipboardBytes(excludeFormat, ownershipMarker);
                     SetClipboardBytes(historyFormat, new byte[] { 0, 0, 0, 0 });
                     SetClipboardBytes(cloudFormat, new byte[] { 0, 0, 0, 0 });
 
                     textBytes = Encoding.Unicode.GetBytes(text + '\0');
                     SetClipboardBytes(CfUnicodeText, textBytes);
-                    // Capture ownership while the native clipboard lock still excludes
-                    // other writers. Capturing after CloseClipboard can claim their data.
-                    _ownedSequence = GetClipboardSequenceNumber();
+                    // Windows can synthesize text formats during CloseClipboard and advance
+                    // its sequence number. Bind cleanup to this item's non-secret marker
+                    // instead, then check it with the clipboard locked before deleting.
+                    ForgetOwnership();
+                    _ownedMarker = ownershipMarker;
+                    ownershipMarker = null;
+                    _ownerWindow = ownerWindow;
                 }
                 catch
                 {
                     // Fail closed if Windows cannot attach the protection formats.
                     EmptyClipboard();
-                    _ownedSequence = 0;
+                    ForgetOwnership();
                     throw;
                 }
                 finally
@@ -114,6 +127,10 @@ namespace M365Workbench.Security
                     if (textBytes != null)
                     {
                         CryptographicOperations.ZeroMemory(textBytes);
+                    }
+                    if (ownershipMarker != null)
+                    {
+                        CryptographicOperations.ZeroMemory(ownershipMarker);
                     }
                 }
             }
@@ -137,9 +154,9 @@ namespace M365Workbench.Security
         {
             lock (Gate)
             {
-                if (_ownedSequence == 0 || GetClipboardSequenceNumber() != _ownedSequence)
+                if (_ownedMarker == null || GetClipboardOwner() != _ownerWindow)
                 {
-                    _ownedSequence = 0;
+                    ForgetOwnership();
                     return false;
                 }
 
@@ -153,9 +170,9 @@ namespace M365Workbench.Security
                 }
                 try
                 {
-                    if (GetClipboardSequenceNumber() != _ownedSequence)
+                    if (!ClipboardContainsOwnedMarker())
                     {
-                        _ownedSequence = 0;
+                        ForgetOwnership();
                         return false;
                     }
 
@@ -164,13 +181,50 @@ namespace M365Workbench.Security
                         throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to clear the clipboard.");
                     }
 
-                    _ownedSequence = 0;
+                    ForgetOwnership();
                     return true;
                 }
                 finally
                 {
                     CloseClipboard();
                 }
+            }
+        }
+
+        // Called only while the native clipboard lock excludes other writers.
+        private static bool ClipboardContainsOwnedMarker()
+        {
+            if (GetClipboardOwner() != _ownerWindow)
+                return false;
+
+            IntPtr handle = GetClipboardData(RegisterRequiredFormat(ExcludeFormatName));
+            if (handle == IntPtr.Zero || GlobalSize(handle).ToUInt64() < (ulong)_ownedMarker.Length)
+                return false;
+
+            IntPtr pointer = GlobalLock(handle);
+            if (pointer == IntPtr.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to inspect clipboard ownership.");
+
+            byte[] currentMarker = new byte[_ownedMarker.Length];
+            try
+            {
+                Marshal.Copy(pointer, currentMarker, 0, currentMarker.Length);
+                return CryptographicOperations.FixedTimeEquals(currentMarker, _ownedMarker);
+            }
+            finally
+            {
+                GlobalUnlock(handle);
+                CryptographicOperations.ZeroMemory(currentMarker);
+            }
+        }
+
+        private static void ForgetOwnership()
+        {
+            _ownerWindow = IntPtr.Zero;
+            if (_ownedMarker != null)
+            {
+                CryptographicOperations.ZeroMemory(_ownedMarker);
+                _ownedMarker = null;
             }
         }
 
