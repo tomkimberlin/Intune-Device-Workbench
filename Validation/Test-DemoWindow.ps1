@@ -1,7 +1,7 @@
 param([Parameter(Mandatory)][string]$RepositoryPath,[int]$ExpectedGraphReads=0,[Parameter(Mandatory)][string]$OutputPath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,UIAutomationClient,UIAutomationTypes
 Add-Type -ReferencedAssemblies @('UIAutomationClient.dll','UIAutomationTypes.dll','System.Runtime.dll') -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -62,12 +62,14 @@ function Check([bool]$Condition,[string]$Name){
 }
 function Wait-Until([scriptblock]$Condition,[string]$Description){
     $watch=[Diagnostics.Stopwatch]::StartNew()
+    $lastError='No exception; condition remained false.'
     do {
         if($process.HasExited){throw "App exited during $Description."}
-        try {if(& $Condition){return}} catch {}
+        try {if(& $Condition){return}} catch {$lastError=[string]$_}
         Start-Sleep -Milliseconds 100
     }while($watch.Elapsed.TotalSeconds -lt 15)
-    throw "Timed out during $Description."
+    $process.Refresh()
+    throw "Timed out during $Description. Last condition error: $lastError. Owned process window: $($process.MainWindowTitle); handle: $($process.MainWindowHandle)."
 }
 function Read-Calls { if([IO.File]::Exists($callsPath)){[IO.File]::ReadAllLines($callsPath)} }
 try {
