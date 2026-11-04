@@ -1,11 +1,11 @@
-name: Follow-up SDK cancellation validation
+name: Follow-up inventory scale validation
 on:
   push:
     branches: [codex/followup-validation]
 permissions:
   contents: read
 jobs:
-  sdk-cancellation:
+  inventory-scale:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -13,19 +13,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Test the published Graph SDK with an in-memory HTTP transport
+      - name: Measure actual desktop loading and filtering with synthetic inventories
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'graph-authentication.zip'
-          Invoke-WebRequest https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Authentication/2.41.1 -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'b6fcb400d5f204f06301f8809c2dcd364e184d7a335673bf1272b1a793cfb8c7') { throw 'Graph SDK package checksum mismatch.' }
-          $module = Join-Path $env:RUNNER_TEMP 'synthetic-graph-sdk'
-          Expand-Archive $archive -DestinationPath $module
-          pwsh.exe -NoLogo -NoProfile -File .\Validation\Test-SdkCancellation.ps1 -ModulePath "$module\Microsoft.Graph.Authentication.psd1" -OutputPath "$env:RUNNER_TEMP\sdk-cancellation.json"
+          pwsh.exe -NoLogo -NoProfile -File .\Validation\Test-InventoryScale.ps1 -OutputPath "$env:RUNNER_TEMP\inventory-scale.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: synthetic-sdk-cancellation
-          path: ${{ runner.temp }}/sdk-cancellation.json
+          name: synthetic-inventory-scale
+          path: ${{ runner.temp }}/inventory-scale.json
           if-no-files-found: error
           retention-days: 3
