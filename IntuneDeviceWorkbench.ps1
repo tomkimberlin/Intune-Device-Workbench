@@ -1744,10 +1744,11 @@ function Find-DeviceScrollViewer {
 function Set-LiveStatusText {
     param(
         [Parameter(Mandatory)][System.Windows.Controls.TextBlock]$Control,
-        [Parameter(Mandatory)][string]$Message
+        [Parameter(Mandatory)][string]$Message,
+        [switch]$AnnounceUnchanged
     )
 
-    if ($Control.Text -ceq $Message) { return }
+    if ($Control.Text -ceq $Message -and -not $AnnounceUnchanged) { return }
     $Control.Text = $Message
     # LiveSetting describes priority; WPF still requires an explicit change event.
     if ($Control.IsVisible -and [System.Windows.Automation.Peers.AutomationPeer]::ListenerExists([System.Windows.Automation.Peers.AutomationEvents]::LiveRegionChanged)) {
@@ -1805,7 +1806,7 @@ function Show-Toast {
         }
     }
     $ToastBorder.Visibility = 'Visible'
-    Set-LiveStatusText -Control $ToastText -Message $Message
+    Set-LiveStatusText -Control $ToastText -Message $Message -AnnounceUnchanged
     $script:ToastExpiresAt = (Get-SensitiveClockNow).AddSeconds(4)
 }
 

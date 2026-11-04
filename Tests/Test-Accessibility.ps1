@@ -53,3 +53,76 @@
     }
     finally { $accessibilityWindow.Close() }
 }
+
+# A synthetic event sink exercises the production toast/expiry functions without
+# installing a UIA listener or claiming screen-reader speech was tested.
+& {
+    Add-Type -TypeDefinition @'
+using System.Collections.Generic;
+namespace M365Workbench.StatusTests.Controls {
+    public class TextBlock {
+        public string Text { get; set; }
+        public bool IsVisible { get; set; }
+        public List<string> Announcements { get; } = new List<string>();
+    }
+    public class Border {
+        public TextBlock Child { get; set; }
+        public object Background { get; set; }
+        public object BorderBrush { get; set; }
+        private string visibility = "Collapsed";
+        public string Visibility {
+            get => visibility;
+            set { visibility = value; Child.IsVisible = value == "Visible"; }
+        }
+    }
+}
+namespace M365Workbench.StatusTests.Media {
+    public class BrushConverter { public string ConvertFromString(string value) => value; }
+}
+namespace M365Workbench.StatusTests.Automation.Peers {
+    public enum AutomationEvents { LiveRegionChanged }
+    public class AutomationPeer {
+        public static bool HasListener;
+        public static bool ListenerExists(AutomationEvents value) => HasListener;
+    }
+    public class UIElementAutomationPeer : AutomationPeer {
+        private Controls.TextBlock control;
+        public static UIElementAutomationPeer CreatePeerForElement(Controls.TextBlock value) => new UIElementAutomationPeer {control=value};
+        public void RaiseAutomationEvent(AutomationEvents value) { control.Announcements.Add(control.Text); }
+    }
+}
+'@
+    foreach ($name in @('Set-LiveStatusText', 'Show-Toast')) {
+        $source = $mainAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name}, $true).Extent.Text
+        . ([scriptblock]::Create($source.Replace('System.Windows.', 'M365Workbench.StatusTests.').Replace('[Windows.', '[M365Workbench.StatusTests.')))
+    }
+    $expiry = $mainAst.Find({param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($script:ToastExpiresAt -ne')}, $true)
+    $ToastText = [M365Workbench.StatusTests.Controls.TextBlock]::new()
+    $ToastBorder = [M365Workbench.StatusTests.Controls.Border]::new()
+    $ToastBorder.Child = $ToastText
+    $ToastIcon = [pscustomobject]@{Text=''}
+    $script:AccessibilityClock = [DateTimeOffset]::Parse('2026-11-04T12:00:00Z')
+    function Get-SensitiveClockNow { $script:AccessibilityClock }
+    [M365Workbench.StatusTests.Automation.Peers.AutomationPeer]::HasListener = $true
+    $message = 'The clipboard is busy. Nothing was copied; try again.'
+    Show-Toast -Message $message -Kind Error
+    Assert-True -Condition ($ToastText.Announcements.Count -eq 1 -and $ToastText.Announcements[0] -eq $message) -Name 'A new visible toast raises an announcement after its complete message is available'
+
+    $script:AccessibilityClock = $script:AccessibilityClock.AddSeconds(5)
+    $now = $script:AccessibilityClock
+    . ([scriptblock]::Create($expiry.Extent.Text))
+    Assert-True -Condition ($ToastBorder.Visibility -eq 'Collapsed') -Name 'The real timer expiry hides the first toast before a repeated operation'
+    Show-Toast -Message $message -Kind Error
+    Assert-True -Condition ($ToastText.Announcements.Count -eq 2 -and $ToastText.Announcements[1] -eq $message -and $script:ToastExpiresAt -gt $now) -Name 'An identical new toast after expiry gets a fresh announcement and display deadline'
+
+    $passiveEvents = $ToastText.Announcements.Count
+    Set-LiveStatusText -Control $ToastText -Message $message
+    Assert-True -Condition ($ToastText.Announcements.Count -eq $passiveEvents) -Name 'An unchanged passive status update does not repeat its announcement'
+    $ToastBorder.Visibility = 'Collapsed'
+    Set-LiveStatusText -Control $ToastText -Message 'Hidden update'
+    Assert-True -Condition ($ToastText.Text -eq 'Hidden update' -and $ToastText.Announcements.Count -eq $passiveEvents) -Name 'Hidden status text can update without being announced'
+    $ToastBorder.Visibility = 'Visible'
+    [M365Workbench.StatusTests.Automation.Peers.AutomationPeer]::HasListener = $false
+    Show-Toast -Message 'No listener update' -Kind Info
+    Assert-True -Condition ($ToastText.Text -eq 'No listener update' -and $ToastText.Announcements.Count -eq $passiveEvents) -Name 'A missing accessibility listener does not prevent a normal toast update'
+}
