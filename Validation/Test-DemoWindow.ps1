@@ -1,6 +1,7 @@
 param([Parameter(Mandatory)][string]$RepositoryPath,[int]$ExpectedGraphReads=0,[Parameter(Mandatory)][string]$OutputPath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
+if($env:GITHUB_ACTIONS -ne 'true'){throw 'This full-window fixture may run only on its disposable GitHub Actions runner.'}
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,UIAutomationClient,UIAutomationTypes
 Add-Type -ReferencedAssemblies @('UIAutomationClient.dll','UIAutomationTypes.dll','System.Runtime.dll') -TypeDefinition @'
 using System;
@@ -12,6 +13,11 @@ public sealed class DemoWindowDriver {
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extraInfo);
+    [DllImport("user32.dll")] private static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll")] private static extern bool CloseClipboard();
+    [DllImport("user32.dll")] private static extern IntPtr GetClipboardData(uint format);
+    [DllImport("kernel32.dll")] private static extern IntPtr GlobalLock(IntPtr memory);
+    [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(IntPtr memory);
     public DemoWindowDriver(int id) {
         processId=id;
         root=AutomationElement.RootElement.FindFirst(TreeScope.Children,new PropertyCondition(AutomationElement.ProcessIdProperty,id));
@@ -25,13 +31,27 @@ public sealed class DemoWindowDriver {
     public bool Shown(string id) { var e=Find(id); return e!=null && !e.Current.IsOffscreen; }
     public void Search(string text) { ((ValuePattern)Find("SearchBox").GetCurrentPattern(ValuePattern.Pattern)).SetValue(text); }
     public void Invoke(string id) { ((InvokePattern)Find(id).GetCurrentPattern(InvokePattern.Pattern)).Invoke(); }
-    public void PressF5() {
+    private void Press(params byte[] keys) {
         Find("SearchBox").SetFocus();
         uint foregroundId;
         GetWindowThreadProcessId(GetForegroundWindow(),out foregroundId);
         if(foregroundId!=processId) throw new InvalidOperationException("Refusing keyboard input outside the owned demo process.");
-        keybd_event(0x74,0,0,UIntPtr.Zero);
-        keybd_event(0x74,0,2,UIntPtr.Zero);
+        try { foreach(byte key in keys) keybd_event(key,0,0,UIntPtr.Zero); }
+        finally { for(int i=keys.Length-1;i>=0;i--) keybd_event(keys[i],0,2,UIntPtr.Zero); }
+    }
+    public void PressF5() { Press(0x74); }
+    public void PressEscape() { Press(0x1b); }
+    public void PressCopyShortcut() { Press(0x11,0x10,0x43); }
+    public static string ClipboardText() {
+        if(!OpenClipboard(IntPtr.Zero)) throw new InvalidOperationException("Synthetic clipboard is busy.");
+        try {
+            IntPtr data=GetClipboardData(13);
+            if(data==IntPtr.Zero) return "";
+            IntPtr pointer=GlobalLock(data);
+            if(pointer==IntPtr.Zero) throw new InvalidOperationException("Synthetic clipboard cannot be read.");
+            try { return Marshal.PtrToStringUni(pointer); }
+            finally { GlobalUnlock(data); }
+        } finally { CloseClipboard(); }
     }
     public void Close() { ((WindowPattern)root.GetCurrentPattern(WindowPattern.Pattern)).Close(); }
 }
@@ -93,12 +113,34 @@ try {
     $driver.Search('  DEMO-DEVICE-BRAVO  ')
     Wait-Until {$driver.Name('DeviceCountText') -match '^1 shown' -and $driver.Name('DetailDeviceName') -eq 'DEMO-DEVICE-BRAVO'} 'search and selection'
     Check ($driver.Name('DetailDeviceName') -eq 'DEMO-DEVICE-BRAVO') 'Typing in the real search field selects the matching demo device'
+    $syntheticPassword='Demo-Only!Laps-2026'
+    $syntheticKey='111111-222222-333333-444444-555555-666666-777777-888888'
+    $driver.Invoke('RevealPasswordButton')
+    Wait-Until {$driver.Name('PasswordText') -eq $syntheticPassword} 'synthetic password reveal'
+    Check ($driver.Name('PasswordText') -eq $syntheticPassword) 'The actual Reveal button exposes only the built-in synthetic password'
+    $driver.PressEscape()
+    Wait-Until {$driver.Name('PasswordText') -eq '••••••••••••••••'} 'Escape hiding the synthetic password'
+    Check ($driver.Name('PasswordText') -eq '••••••••••••••••') 'Actual Escape keyboard input hides the revealed password'
+    $expectedAccount=$driver.Name('AccountNameText')
+    $driver.Invoke('CopyAccountButton')
+    Wait-Until {[DemoWindowDriver]::ClipboardText() -eq $expectedAccount} 'synthetic username copy'
+    Check ([DemoWindowDriver]::ClipboardText() -eq $expectedAccount) 'The real username button copies the displayed demo account'
     $driver.Invoke('BitLockerTabButton')
     Wait-Until {$driver.Shown('CopyRecoveryKeyButton')} 'BitLocker tab'
     Check ($driver.Enabled('CopyRecoveryKeyButton')) 'The real BitLocker tab exposes recovery for the selected demo device'
+    $driver.PressCopyShortcut()
+    Wait-Until {[DemoWindowDriver]::ClipboardText() -eq $syntheticKey} 'BitLocker keyboard copy'
+    Check ([DemoWindowDriver]::ClipboardText() -eq $syntheticKey) 'Actual Ctrl Shift C copies the active BitLocker tab synthetic key'
     $driver.Invoke('LapsTabButton')
     Wait-Until {$driver.Shown('CopyPasswordButton')} 'LAPS tab'
     Check ($driver.Enabled('CopyPasswordButton')) 'Returning to the real LAPS tab preserves its recovery controls'
+    $driver.PressCopyShortcut()
+    Wait-Until {[DemoWindowDriver]::ClipboardText() -eq $syntheticPassword} 'LAPS keyboard copy'
+    Check ([DemoWindowDriver]::ClipboardText() -eq $syntheticPassword) 'Actual Ctrl Shift C copies the active LAPS tab synthetic password'
+    $driver.Invoke('CopyDeviceDetailsButton')
+    Wait-Until {[DemoWindowDriver]::ClipboardText().Contains('DEMO-DEVICE-BRAVO')} 'device details copy'
+    $details=[DemoWindowDriver]::ClipboardText()
+    Check (-not $details.Contains($syntheticPassword) -and -not $details.Contains($syntheticKey)) 'The real Copy details button replaces the secret with metadata only'
     $driver.Search('')
     Wait-Until {$driver.Name('DeviceCountText') -eq $initialCounts} 'clearing search'
     Check (@(Read-Calls).Count -eq 0) 'Search and tab changes stay inside the synthetic workspace'
@@ -117,13 +159,14 @@ try {
     }
     $driver.Close()
     Check ($process.WaitForExit(5000) -and $process.ExitCode -eq 0) 'Actual demo window closes normally'
+    Check ([DemoWindowDriver]::ClipboardText() -eq '') 'Closing the actual app clears its owned synthetic clipboard contents'
     Check (@(Read-Calls).Count -eq $ExpectedGraphReads) 'No extra Graph work appears during close'
     $failed=@($checks|Where-Object {-not $_.Passed}).Count
     $result=[ordered]@{
         Commit=(& git -C $RepositoryPath rev-parse HEAD).Trim();PowerShell=$PSVersionTable.PSVersion.ToString()
         ExpectedGraphReads=$ExpectedGraphReads;ObservedGraphReads=$observedCalls.Count;GraphUris=$observedCalls
         InitialCounts=$initialCounts;AfterF5Counts=$afterCounts;Passed=$checks.Count-$failed;Failed=$failed;Checks=$checks
-        Limits='Actual application process, WPF/UIA and keyboard input on disposable Windows. Graph replaced by isolated local module; no SDK, tenant, credentials, recovery or clipboard action.'
+        Limits='Actual application process, WPF/UIA, keyboard input and synthetic recovery/clipboard actions on disposable Windows. Graph replaced by isolated local module; no SDK, tenant, credentials or production recovery.'
     }
     [IO.File]::WriteAllText($OutputPath,($result|ConvertTo-Json -Depth 5))
     "$($result.Passed) passed; $failed failed"
