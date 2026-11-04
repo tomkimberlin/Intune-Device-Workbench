@@ -2,8 +2,9 @@
 # the actual key handler and operation entry points; never load the Graph SDK.
 & {
     Add-Type -AssemblyName PresentationFramework
-    foreach ($name in @('Start-InventoryLoad','Start-Authentication')) {
-        . ([scriptblock]::Create($mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true).Extent.Text))
+    foreach ($name in @('Start-InventoryLoad','Start-Authentication','Set-LiveStatusText')) {
+        $node=$mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+        if ($null -ne $node) { . ([scriptblock]::Create($node.Extent.Text)) }
     }
     $xamlNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true)
     $reader=[Xml.XmlNodeReader]::new([xml]$xamlNode.Right.Expression.Value)
