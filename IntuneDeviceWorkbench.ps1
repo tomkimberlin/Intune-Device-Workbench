@@ -2097,6 +2097,20 @@ function Cancel-PendingRecoveryAction {
     $script:PendingBitLockerVerificationGeneration = $null
     if ($null -ne $script:LocalVerificationCancellation) { $script:LocalVerificationCancellation.Cancel() }
     if ($null -ne $script:MicrosoftVerificationCancelEvent) { $null = $script:MicrosoftVerificationCancelEvent.Set() }
+    if ($retrieving) {
+        $operation = $script:CurrentOperation
+        if (-not $operation.CancellationRequested -and $null -ne $operation.AsyncResult -and -not $operation.AsyncResult.IsCompleted) {
+            try {
+                # Keep the worker occupied until polling observes both completions.
+                $operation.StopAsyncResult = $script:GraphPowerShell.BeginStop($null, $null)
+                $operation.CancellationRequested = $true
+            }
+            catch {
+                # Intent remains canceled even if the running request cannot stop.
+                # Its eventual result will still be discarded by completion.
+            }
+        }
+    }
 }
 
 function Update-OperationControls {
@@ -3177,18 +3191,25 @@ function Complete-GraphOperation {
         # A sanitized error is produced below from the PowerShell error stream.
     }
 
+    $operationName = [string]$Operation.Name
     $result = Get-OperationResultObject -Operation $Operation
     if ($null -eq $result) {
-        $errorText = if ($script:GraphPowerShell.Streams.Error.Count -gt 0) { [string]$script:GraphPowerShell.Streams.Error[0].Exception.Message } else { 'The background operation did not return a result.' }
-        $result = [pscustomobject]@{ Kind = 'Error'; ErrorCode = 'OperationFailed'; Message = $errorText; StatusCode = $null }
+        if ($operationName -in @('Credential', 'BitLockerKey') -and $Operation.CancellationRequested) {
+            # A stopped read may return nothing. Preserve any actual result/error
+            # above, especially a 401 that must still invalidate authentication.
+            $result = [pscustomobject]@{ Kind = 'RecoveryCanceled' }
+        }
+        else {
+            $errorText = if ($script:GraphPowerShell.Streams.Error.Count -gt 0) { [string]$script:GraphPowerShell.Streams.Error[0].Exception.Message } else { 'The background operation did not return a result.' }
+            $result = [pscustomobject]@{ Kind = 'Error'; ErrorCode = 'OperationFailed'; Message = $errorText; StatusCode = $null }
+        }
     }
 
-    $operationName = [string]$Operation.Name
     $expectedKind = switch ($operationName) {
         'Authenticate' { 'AuthResult' }
         'Inventory' { 'InventoryResult' }
-        'Credential' { 'CredentialResult' }
-        'BitLockerKey' { 'BitLockerKeyResult' }
+        'Credential' { 'CredentialResult'; if ($Operation.CancellationRequested) { 'RecoveryCanceled' } }
+        'BitLockerKey' { 'BitLockerKeyResult'; if ($Operation.CancellationRequested) { 'RecoveryCanceled' } }
         'MicrosoftVerification' { 'MicrosoftVerificationResult'; 'VerificationError'; 'VerificationCanceled' }
     }
     if ([string]$result.Kind -ne 'Error' -and [string]$result.Kind -notin @($expectedKind)) {
@@ -3345,7 +3366,7 @@ function Complete-GraphOperation {
             $verificationGeneration = $script:PendingCredentialVerificationGeneration
             $script:PendingCredentialAction = $null
             $script:PendingCredentialVerificationGeneration = $null
-            if (-not $script:RecoveryRequestCanceled -and (Test-SecretVerificationGeneration -Generation $verificationGeneration)) {
+            if (-not $Operation.CancellationRequested -and -not $script:RecoveryRequestCanceled -and (Test-SecretVerificationGeneration -Generation $verificationGeneration)) {
                 Complete-CredentialAction -Action $action -Credential $result
             }
             else {
@@ -3354,7 +3375,7 @@ function Complete-GraphOperation {
                 }
                 Restore-SecretActionControls
                 Set-AppStatus -Message "Ready — signed in as $($settings.ExpectedAccount)"
-                Show-Toast -Message $(if ($script:RecoveryRequestCanceled) { 'Recovery action canceled. No password was exposed.' } else { 'Verification expired or the Windows session changed. No password was exposed.' }) -Kind Info
+                Show-Toast -Message $(if ($Operation.CancellationRequested -or $script:RecoveryRequestCanceled) { 'Recovery action canceled. No password was exposed.' } else { 'Verification expired or the Windows session changed. No password was exposed.' }) -Kind Info
                 Set-RecoveryActionFocus -Kind LAPS -Action $action
             }
         }
@@ -3363,7 +3384,7 @@ function Complete-GraphOperation {
             $verificationGeneration = $script:PendingBitLockerVerificationGeneration
             $script:PendingBitLockerAction = $null
             $script:PendingBitLockerVerificationGeneration = $null
-            if (-not $script:RecoveryRequestCanceled -and (Test-SecretVerificationGeneration -Generation $verificationGeneration)) {
+            if (-not $Operation.CancellationRequested -and -not $script:RecoveryRequestCanceled -and (Test-SecretVerificationGeneration -Generation $verificationGeneration)) {
                 Complete-BitLockerAction -Action $action -KeyResult $result
             }
             else {
@@ -3372,7 +3393,7 @@ function Complete-GraphOperation {
                 }
                 Restore-SecretActionControls
                 Set-AppStatus -Message "Ready — signed in as $($settings.ExpectedAccount)"
-                Show-Toast -Message $(if ($script:RecoveryRequestCanceled) { 'Recovery action canceled. No recovery key was exposed.' } else { 'Verification expired or the Windows session changed. No recovery key was exposed.' }) -Kind Info
+                Show-Toast -Message $(if ($Operation.CancellationRequested -or $script:RecoveryRequestCanceled) { 'Recovery action canceled. No recovery key was exposed.' } else { 'Verification expired or the Windows session changed. No recovery key was exposed.' }) -Kind Info
                 Set-RecoveryActionFocus -Kind BitLocker -Action $action
             }
         }
