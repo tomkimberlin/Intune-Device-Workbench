@@ -119,9 +119,10 @@
     function Set-AuthenticationDisplay { param($SignedIn,$Text) $script:IsSignedIn=$SignedIn }
     function Set-AppStatus { param($Message) }
     function Show-Toast { param($Message,$Kind) }
-    foreach ($name in @('CopyPasswordButton','RevealPasswordButton','CopyPasswordButtonText','CopyRecoveryKeyButton','RevealRecoveryKeyButton','CopyRecoveryKeyButtonText','RefreshButton','SignInButton','LoadingOverlay','RefreshButtonText','RefreshIcon')) {
+    foreach ($name in @('CopyAccountButton','CopyPasswordButton','RevealPasswordButton','CopyPasswordButtonText','CopyRecoveryKeyButton','RevealRecoveryKeyButton','CopyRecoveryKeyButtonText','RefreshButton','SignInButton','LoadingOverlay','RefreshButtonText','RefreshIcon')) {
         Set-Variable -Name $name -Value ([pscustomobject]@{IsEnabled=$true;Text='';Visibility='Visible';ToolTip=''})
     }
+    $AccountNameText=[pscustomobject]@{Text='Retrieved with password'}
     $BitLockerKeySelector=[pscustomobject]@{SelectedItem=[pscustomobject]@{Id='synthetic'};IsEnabled=$true}
     $script:IsSignedIn=$true
     $script:QualityRevoked=$false

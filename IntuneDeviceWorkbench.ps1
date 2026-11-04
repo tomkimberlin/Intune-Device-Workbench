@@ -2132,6 +2132,8 @@ function Restore-SecretActionControls {
     $lapsAvailable = $script:IsSignedIn -and $null -ne $selected -and [bool]$selected.LapsAvailable
     $bitLockerAvailable = $script:IsSignedIn -and $null -ne $selected -and [bool]$selected.BitLockerAvailable -and $null -ne $BitLockerKeySelector.SelectedItem
     $CopyDeviceDetailsButton.IsEnabled = $null -ne $selected
+    $CopyAccountButton.IsEnabled = $null -ne $selected -and
+        -not [string]::IsNullOrWhiteSpace($AccountNameText.Text) -and $AccountNameText.Text -ne 'Retrieved with password'
     $CopyPasswordButton.IsEnabled = $lapsAvailable
     $RevealPasswordButton.IsEnabled = $lapsAvailable
     $CopyPasswordButtonText.Text = 'Copy password'
@@ -2167,6 +2169,7 @@ function Set-SecretActionBusy {
     param([Parameter(Mandatory)][ValidateSet('LAPS', 'BitLocker')][string]$Kind)
 
     $CopyDeviceDetailsButton.IsEnabled = $false
+    $CopyAccountButton.IsEnabled = $false
     $CopyPasswordButton.IsEnabled = $false
     $RevealPasswordButton.IsEnabled = $false
     $CopyRecoveryKeyButton.IsEnabled = $false
@@ -3565,6 +3568,9 @@ $RevealPasswordButton.Add_Click({ Invoke-CredentialAction -Action 'Reveal' })
 $CopyRecoveryKeyButton.Add_Click({ Invoke-BitLockerAction -Action 'Copy' })
 $RevealRecoveryKeyButton.Add_Click({ Invoke-BitLockerAction -Action 'Reveal' })
 $CopyAccountButton.Add_Click({
+    # Do not let a late recovery Copy overwrite a newer username copy.
+    if ($null -eq (Get-SelectedDevice) -or $null -ne $script:CurrentOperation -or
+        $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) { return }
     if (-not [string]::IsNullOrWhiteSpace($AccountNameText.Text) -and $AccountNameText.Text -ne 'Retrieved with password') {
         try {
             [M365Workbench.Security.SecureClipboard]::SetSensitiveText($AccountNameText.Text, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
