@@ -1093,7 +1093,7 @@ $xaml = @'
           <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
           <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#64748B" Margin="0,0,8,0" VerticalAlignment="Center"/>
           <ProgressBar x:Name="BusyIndicator" Grid.Column="1" Width="64" Height="3" IsIndeterminate="True" Foreground="{StaticResource PrimaryBrush}" Visibility="Collapsed" Margin="0,0,10,0"/>
-          <TextBlock x:Name="FooterStatusText" Grid.Column="2" Text="Starting..." Foreground="#64748B" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.Name="Application status" AutomationProperties.LiveSetting="Polite"/>
+          <TextBlock x:Name="FooterStatusText" Grid.Column="2" Text="Starting..." Foreground="#64748B" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite"/>
         </Grid>
         <TextBlock x:Name="DeviceCountText" Grid.Column="1" Foreground="#64748B" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
       </Grid>
@@ -1106,7 +1106,7 @@ $xaml = @'
         <Border Width="20" Height="20" CornerRadius="10" Background="#20FFFFFF" VerticalAlignment="Top">
           <TextBlock x:Name="ToastIcon" Text="✓" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
-        <TextBlock x:Name="ToastText" Grid.Column="1" Foreground="White" FontSize="12.5" FontWeight="SemiBold" MaxWidth="400" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.Name="Notification" AutomationProperties.LiveSetting="Assertive"/>
+        <TextBlock x:Name="ToastText" Grid.Column="1" Foreground="White" FontSize="12.5" FontWeight="SemiBold" MaxWidth="400" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Assertive"/>
       </Grid>
     </Border>
 
@@ -1138,7 +1138,7 @@ $xaml = @'
               <TextBlock x:Name="DeviceCodeText" Text="Waiting for Microsoft..." FontFamily="Cascadia Mono, Consolas" FontSize="28" FontWeight="Bold" Foreground="#172033" HorizontalAlignment="Center" Margin="0,7,0,0"/>
             </StackPanel>
           </Border>
-          <TextBlock x:Name="AuthOverlayStatus" Text="Preparing sign-in..." Foreground="#475569" HorizontalAlignment="Stretch" TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,17" AutomationProperties.Name="Verification status" AutomationProperties.LiveSetting="Polite"/>
+          <TextBlock x:Name="AuthOverlayStatus" Text="Preparing sign-in..." Foreground="#475569" HorizontalAlignment="Stretch" TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,17" AutomationProperties.LiveSetting="Polite"/>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Button x:Name="CopyCodeButton" Grid.Column="0" Content="Copy code" Style="{StaticResource SecondaryButton}" IsEnabled="False"/>
@@ -1247,20 +1247,18 @@ param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $Co
     Import-Module Microsoft.Graph.Authentication -MinimumVersion ([version]$MinimumGraphVersion) -ErrorAction Stop
 
     try {
+        # Context metadata can outlive a failed session. Let the SDK establish
+        # authentication on every sign-in/reconnect, reusing its secure cache.
+        Connect-MgGraph `
+            -TenantId $TenantId `
+            -UseDeviceCode `
+            -Scopes $RequiredScopes `
+            -ContextScope CurrentUser `
+            -NoWelcome `
+            -ErrorAction Stop
+
         $context = Get-MgContext
         $validation = Test-LapsGraphContext -Context $context -ExpectedAccount $ExpectedAccount -ExpectedTenantId $ExpectedTenantObjectId -RequiredScopes $RequiredScopes
-        if (-not $validation.IsValid) {
-            Connect-MgGraph `
-                -TenantId $TenantId `
-                -UseDeviceCode `
-                -Scopes $RequiredScopes `
-                -ContextScope CurrentUser `
-                -NoWelcome `
-                -ErrorAction Stop
-
-            $context = Get-MgContext
-            $validation = Test-LapsGraphContext -Context $context -ExpectedAccount $ExpectedAccount -ExpectedTenantId $ExpectedTenantObjectId -RequiredScopes $RequiredScopes
-        }
 
         if (-not $validation.IsValid) {
             [pscustomobject]@{
@@ -1743,13 +1741,30 @@ function Find-DeviceScrollViewer {
     return $null
 }
 
+function Set-LiveStatusText {
+    param(
+        [Parameter(Mandatory)][System.Windows.Controls.TextBlock]$Control,
+        [Parameter(Mandatory)][string]$Message
+    )
+
+    if ($Control.Text -ceq $Message) { return }
+    $Control.Text = $Message
+    # LiveSetting describes priority; WPF still requires an explicit change event.
+    if ($Control.IsVisible -and [System.Windows.Automation.Peers.AutomationPeer]::ListenerExists([System.Windows.Automation.Peers.AutomationEvents]::LiveRegionChanged)) {
+        $peer = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($Control)
+        if ($null -ne $peer) {
+            $peer.RaiseAutomationEvent([System.Windows.Automation.Peers.AutomationEvents]::LiveRegionChanged)
+        }
+    }
+}
+
 function Set-AppStatus {
     param(
         [Parameter(Mandatory)][string]$Message,
         [switch]$Busy
     )
 
-    $FooterStatusText.Text = $Message
+    Set-LiveStatusText -Control $FooterStatusText -Message $Message
     $BusyIndicator.Visibility = if ($Busy) { 'Visible' } else { 'Collapsed' }
 }
 
@@ -1789,8 +1804,8 @@ function Show-Toast {
             $ToastIcon.Text = 'i'
         }
     }
-    $ToastText.Text = $Message
     $ToastBorder.Visibility = 'Visible'
+    Set-LiveStatusText -Control $ToastText -Message $Message
     $script:ToastExpiresAt = (Get-SensitiveClockNow).AddSeconds(4)
 }
 
@@ -1971,7 +1986,7 @@ function Set-DeviceCode {
 
     $script:LastDeviceCode = $Code
     $DeviceCodeText.Text = $Code
-    $AuthOverlayStatus.Text = "Code copied. Sign in as $($settings.ExpectedAccount)."
+    Set-LiveStatusText -Control $AuthOverlayStatus -Message "Code copied. Sign in as $($settings.ExpectedAccount)."
     $CopyCodeButton.IsEnabled = $true
     $OpenSignInButton.IsEnabled = $true
 
@@ -1979,7 +1994,7 @@ function Set-DeviceCode {
         [M365Workbench.Security.SecureClipboard]::SetSensitiveText($Code, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
     }
     catch {
-        $AuthOverlayStatus.Text = 'The code is shown above. Copy it manually if needed.'
+        Set-LiveStatusText -Control $AuthOverlayStatus -Message 'The code is shown above. Copy it manually if needed.'
     }
 
     if ($script:SignInPageOpenedForCode -ne $Code) {
@@ -2296,7 +2311,7 @@ function Clear-PendingSecretRequest {
 function Stop-SecretVerification {
     Clear-SecretVerificationState
     $CancelVerificationButton.IsEnabled = $false
-    $AuthOverlayStatus.Text = 'Canceling verification...'
+    Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Canceling verification...'
 }
 
 function Fail-SecretVerification {
@@ -2375,7 +2390,7 @@ function Start-MicrosoftSecretVerification {
     $AuthOverlayFooter.Text = "Your organization's sign-in policy determines which verification methods are required."
     $AuthOverlay.Visibility = 'Visible'
     $DeviceCodeText.Text = 'Waiting for Microsoft...'
-    $AuthOverlayStatus.Text = 'Preparing verification...'
+    Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Preparing verification...'
     $CopyCodeButton.IsEnabled = $false
     $OpenSignInButton.IsEnabled = $false
     $CancelVerificationButton.Visibility = 'Visible'
@@ -2558,7 +2573,7 @@ function Start-Authentication {
     $AuthOverlayFooter.Text = 'Intune Device Workbench continues automatically after sign-in.'
     $AuthOverlay.Visibility = 'Visible'
     $DeviceCodeText.Text = 'Waiting for Microsoft...'
-    $AuthOverlayStatus.Text = 'Checking for a reusable secure sign-in...'
+    Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Checking for a reusable secure sign-in...'
     $CopyCodeButton.IsEnabled = $false
     $OpenSignInButton.IsEnabled = $false
     $CancelVerificationButton.Visibility = 'Collapsed'
@@ -3573,9 +3588,9 @@ $CopyCodeButton.Add_Click({
     if (-not [string]::IsNullOrWhiteSpace($script:LastDeviceCode)) {
         try {
             [M365Workbench.Security.SecureClipboard]::SetSensitiveText($script:LastDeviceCode, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
-            $AuthOverlayStatus.Text = 'Code copied. Complete sign-in in the browser.'
+            Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Code copied. Complete sign-in in the browser.'
         }
-        catch { $AuthOverlayStatus.Text = 'Copy the code manually, then continue in the browser.' }
+        catch { Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Copy the code manually, then continue in the browser.' }
     }
 })
 $OpenSignInButton.Add_Click({ Open-DeviceSignInPage })
@@ -3784,7 +3799,7 @@ $window.Add_Loaded({
             $AuthOverlayInstruction.Text = 'Windows verification is not available. Complete Microsoft sign-in as the configured administrator account.'
             $AuthOverlayFooter.Text = "Your organization's sign-in policy determines which verification methods are required."
             $DeviceCodeText.Text = 'Z9Y8X7W6V'
-            $AuthOverlayStatus.Text = "Code copied. Sign in as $($settings.ExpectedAccount)."
+            Set-LiveStatusText -Control $AuthOverlayStatus -Message "Code copied. Sign in as $($settings.ExpectedAccount)."
             $CopyCodeButton.IsEnabled = $true
             $OpenSignInButton.IsEnabled = $true
             $CancelVerificationButton.Visibility = 'Visible'
