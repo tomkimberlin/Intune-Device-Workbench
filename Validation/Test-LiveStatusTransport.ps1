@@ -179,8 +179,11 @@ try {
     Assert-Observation (Wait-ForEvent "ToastText`t$toast") 'Toast event reaches the external client'
     $expired=Send-Command ExpireToast
     Assert-Observation (-not $expired.ToastVisible) 'Production expiry hides the previous toast'
+    Start-Sleep -Milliseconds 500
+    $firstToastDeliveredCount=@($client.Snapshot()|Where-Object {$_ -ceq "ToastText`t$toast"}).Count
+    Assert-Observation ($firstToastDeliveredCount -eq 1) 'Exactly one toast event was delivered before the repeated command'
     $null=Send-Command Toast $toast
-    Assert-Observation (Wait-ForEvent "ToastText`t$toast" 2) 'The repeated toast produces a second delivered event'
+    Assert-Observation (Wait-ForEvent "ToastText`t$toast" ($firstToastDeliveredCount+1)) 'The repeated toast produces a second delivered event'
 
     $auth='Synthetic verification canceled; no recovery data accessed.'
     $null=Send-Command Auth $auth
@@ -192,7 +195,7 @@ try {
     Assert-Observation ($client.Snapshot().Count -eq $before) 'Hidden status does not emit a live-region event'
 
     $failures=@($checks|Where-Object {-not $_.Passed}).Count
-    $result=[ordered]@{PowerShell=$PSVersionTable.PSVersion.ToString();SourceSHA256=(Get-FileHash $SourcePath -Algorithm SHA256).Hash;ExpectedBaselineFailure=[bool]$ExpectBaselineFailure;Passed=$checks.Count-$failures;Failed=$failures;Checks=$checks;DeliveredEvents=@($client.Snapshot());Limits='Real WPF and cross-process UIA transport; no screen-reader speech, Graph, credentials, Windows Hello or host clipboard access.'}
+    $result=[ordered]@{PowerShell=$PSVersionTable.PSVersion.ToString();SourceSHA256=(Get-FileHash $SourcePath -Algorithm SHA256).Hash;ExpectedBaselineFailure=[bool]$ExpectBaselineFailure;Passed=$checks.Count-$failures;Failed=$failures;Checks=$checks;ToastEventsBeforeRepeat=$firstToastDeliveredCount;DeliveredEvents=@($client.Snapshot());Limits='Real WPF and cross-process UIA transport; no screen-reader speech, Graph, credentials, Windows Hello or host clipboard access.'}
     if($OutputPath){[IO.File]::WriteAllText($OutputPath,($result|ConvertTo-Json -Depth 6))}
     "$($result.Passed) passed; $failures failed"
     if($ExpectBaselineFailure){
@@ -201,6 +204,7 @@ try {
             'Footer live-region event reaches the external client',
             'Client reads the actual toast message',
             'Toast event reaches the external client',
+            'Exactly one toast event was delivered before the repeated command',
             'The repeated toast produces a second delivered event',
             'Client reads the actual verification message',
             'Verification event reaches the external client'
