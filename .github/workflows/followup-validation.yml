@@ -1,30 +1,31 @@
-name: Follow-up compatibility and accessibility validation
+name: Follow-up SDK cancellation validation
 on:
   push:
     branches: [codex/followup-validation]
 permissions:
   contents: read
 jobs:
-  powershell-minimum:
+  sdk-cancellation:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Verify the declared PowerShell 7.4 minimum in an isolated directory
+          fetch-depth: 0
+      - name: Test the published Graph SDK with an in-memory HTTP transport
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'PowerShell-7.4.0-win-x64.zip'
-          Invoke-WebRequest https://github.com/PowerShell/PowerShell/releases/download/v7.4.0/PowerShell-7.4.0-win-x64.zip -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '62151db1d98a8b56aeb249cc8a3ce17948f1c83b4062dac8d0c4302de71cbd75') { throw 'PowerShell archive checksum mismatch.' }
-          $runtime = Join-Path $env:RUNNER_TEMP 'powershell-7.4.0'
-          Expand-Archive $archive -DestinationPath $runtime
-          $exe = Join-Path $runtime 'pwsh.exe'
-          & $exe -NoLogo -NoProfile -Command '$PSVersionTable | Format-Table'
-          & $exe -NoLogo -NoProfile -STA -File .\Tests\Test-IntuneDeviceWorkbench.ps1
+          $archive = Join-Path $env:RUNNER_TEMP 'graph-authentication.zip'
+          Invoke-WebRequest https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Authentication/2.41.1 -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'b6fcb400d5f204f06301f8809c2dcd364e184d7a335673bf1272b1a793cfb8c7') { throw 'Graph SDK package checksum mismatch.' }
+          $module = Join-Path $env:RUNNER_TEMP 'synthetic-graph-sdk'
+          Expand-Archive $archive -DestinationPath $module
+          pwsh.exe -NoLogo -NoProfile -File .\Validation\Test-SdkCancellation.ps1 -ModulePath "$module\Microsoft.Graph.Authentication.psd1" -OutputPath "$env:RUNNER_TEMP\sdk-cancellation.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $exe -NoLogo -NoProfile -STA -File .\Tests\Test-NativeClipboard.ps1 -AllowClipboardOverwrite
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode -RenderPreviewPath "$env:RUNNER_TEMP\minimum-runtime.png"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: synthetic-sdk-cancellation
+          path: ${{ runner.temp }}/sdk-cancellation.json
+          if-no-files-found: error
+          retention-days: 3
