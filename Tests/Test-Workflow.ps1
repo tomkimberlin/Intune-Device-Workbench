@@ -2,6 +2,7 @@
 # controls. No Graph module, tenant connection, or Windows clipboard access.
 & {
     Add-Type -AssemblyName PresentationFramework
+    $DemoMode=$false
     foreach ($name in @('Initialize-GraphWorker','Start-GraphOperation','Stop-InventoryLoad','Start-InventoryLoad','Set-InventoryLoadingState','Reset-InventoryControls','Complete-GraphOperation','Get-OperationResultObject','Process-OperationOutput','Restore-SecretActionControls','Set-SecretActionBusy','Update-OperationControls','Cancel-PendingRecoveryAction','Set-RecoveryTab','Complete-LocalSecretVerification','Request-SecretAction')) {
         . ([scriptblock]::Create($mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true).Extent.Text))
     }

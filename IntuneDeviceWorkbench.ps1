@@ -2564,7 +2564,7 @@ function Request-SecretAction {
 }
 
 function Start-Authentication {
-    if ($null -ne $script:CurrentOperation -or $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) {
+    if ($DemoMode -or $null -ne $script:CurrentOperation -or $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) {
         return
     }
 
@@ -2602,7 +2602,7 @@ function Start-Authentication {
 }
 
 function Start-InventoryLoad {
-    if (-not $script:IsSignedIn -or $null -ne $script:CurrentOperation -or $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) {
+    if ($DemoMode -or -not $script:IsSignedIn -or $null -ne $script:CurrentOperation -or $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) {
         return
     }
 
