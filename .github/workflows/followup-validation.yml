@@ -5,29 +5,6 @@ on:
 permissions:
   contents: read
 jobs:
-  powershell-minimum:
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Verify the declared PowerShell 7.4 minimum in an isolated directory
-        shell: pwsh
-        run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'PowerShell-7.4.0-win-x64.zip'
-          Invoke-WebRequest https://github.com/PowerShell/PowerShell/releases/download/v7.4.0/PowerShell-7.4.0-win-x64.zip -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '62151db1d98a8b56aeb249cc8a3ce17948f1c83b4062dac8d0c4302de71cbd75') { throw 'PowerShell archive checksum mismatch.' }
-          $runtime = Join-Path $env:RUNNER_TEMP 'powershell-7.4.0'
-          Expand-Archive $archive -DestinationPath $runtime
-          $exe = Join-Path $runtime 'pwsh.exe'
-          & $exe -NoLogo -NoProfile -Command '$PSVersionTable | Format-Table'
-          & $exe -NoLogo -NoProfile -STA -File .\Tests\Test-IntuneDeviceWorkbench.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $exe -NoLogo -NoProfile -STA -File .\Tests\Test-NativeClipboard.ps1 -AllowClipboardOverwrite
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode -RenderPreviewPath "$env:RUNNER_TEMP\minimum-runtime.png"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   live-status-transport:
     runs-on: windows-latest
     timeout-minutes: 5

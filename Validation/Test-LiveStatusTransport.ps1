@@ -65,7 +65,9 @@ if ($Mode -eq 'Provider') {
                 ToastVisible=$ToastText.IsVisible
                 FooterVisible=$FooterStatusText.IsVisible
             }
-            [IO.File]::WriteAllText((Join-Path $ExchangePath "reply-$script:CommandIndex.json"),($reply|ConvertTo-Json -Compress))
+            $replyTemp=Join-Path $ExchangePath "reply-$script:CommandIndex.tmp"
+            [IO.File]::WriteAllText($replyTemp,($reply|ConvertTo-Json -Compress))
+            [IO.File]::Move($replyTemp,(Join-Path $ExchangePath "reply-$script:CommandIndex.json"))
             $script:CommandIndex++
         }
         catch {
@@ -75,14 +77,15 @@ if ($Mode -eq 'Provider') {
     })
     $window.Add_ContentRendered({
         $handle=([Windows.Interop.WindowInteropHelper]::new($window)).Handle.ToInt64()
-        [IO.File]::WriteAllText((Join-Path $ExchangePath 'ready.json'),(@{Handle=$handle}|ConvertTo-Json -Compress))
+        [IO.File]::WriteAllText((Join-Path $ExchangePath 'ready.tmp'),(@{Handle=$handle}|ConvertTo-Json -Compress))
+        [IO.File]::Move((Join-Path $ExchangePath 'ready.tmp'),(Join-Path $ExchangePath 'ready.json'))
         $timer.Start()
     })
     $null=$window.ShowDialog()
     exit 0
 }
 
-Add-Type -ReferencedAssemblies @('UIAutomationClient.dll','UIAutomationTypes.dll','System.Runtime.dll','System.Collections.dll') -TypeDefinition @'
+Add-Type -ReferencedAssemblies @('UIAutomationClient.dll','UIAutomationTypes.dll','System.Runtime.dll','System.Collections.dll','System.Threading.dll') -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Windows.Automation;
@@ -192,7 +195,19 @@ try {
     $result=[ordered]@{PowerShell=$PSVersionTable.PSVersion.ToString();SourceSHA256=(Get-FileHash $SourcePath -Algorithm SHA256).Hash;ExpectedBaselineFailure=[bool]$ExpectBaselineFailure;Passed=$checks.Count-$failures;Failed=$failures;Checks=$checks;DeliveredEvents=@($client.Snapshot());Limits='Real WPF and cross-process UIA transport; no screen-reader speech, Graph, credentials, Windows Hello or host clipboard access.'}
     if($OutputPath){[IO.File]::WriteAllText($OutputPath,($result|ConvertTo-Json -Depth 6))}
     "$($result.Passed) passed; $failures failed"
-    if($ExpectBaselineFailure){if($failures -eq 0){throw 'Baseline unexpectedly passes.'}}
+    if($ExpectBaselineFailure){
+        $expectedFailures=@(
+            'Client reads the actual footer message',
+            'Footer live-region event reaches the external client',
+            'Client reads the actual toast message',
+            'Toast event reaches the external client',
+            'The repeated toast produces a second delivered event',
+            'Client reads the actual verification message',
+            'Verification event reaches the external client'
+        )
+        $actualFailures=@($checks|Where-Object {-not $_.Passed}|ForEach-Object Name)
+        if(@(Compare-Object $expectedFailures $actualFailures).Count -ne 0){throw 'Baseline did not reproduce the specific expected accessibility failures.'}
+    }
     elseif($failures){throw "$failures UIA transport checks failed."}
 }
 finally {
