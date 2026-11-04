@@ -189,13 +189,16 @@ function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collec
             $script:PendingBitLockerVerificationGeneration=0
             $script:ActiveRecoveryTab='LAPS'
             $payload=[pscustomobject]@{Kind=$(if($kind -eq 'Credential'){'CredentialResult'}else{'BitLockerKeyResult'});Password='synthetic';RecoveryKey='synthetic'}
-            $null=Start-GraphOperation -Name $kind -ScriptText 'param($Payload) Start-Sleep -Milliseconds 50; $Payload' -Arguments @($payload)
+            $null=Start-GraphOperation -Name $kind -ScriptText 'param($Payload) $Payload' -Arguments @($payload)
+            if(-not $script:CurrentOperation.AsyncResult.AsyncWaitHandle.WaitOne(2000)){throw 'Synthetic completed-result race did not finish.'}
             Set-RecoveryTab -Tab BitLocker
             Set-RecoveryTab -Tab LAPS
             Wait-WorkflowFixture
             $released=if($kind -eq 'Credential'){$null -eq $payload.Password}else{$null -eq $payload.RecoveryKey}
-            Assert-True -Condition ($script:WorkflowExposed -eq 0 -and $released -and $script:WorkflowToast -like 'Recovery action canceled*') -Name "Switching tabs away and back discards a delayed $kind result without exposing it"
+            Assert-True -Condition ($script:WorkflowExposed -eq 0 -and $released -and $script:WorkflowToast -like 'Recovery action canceled*') -Name "Switching tabs after a $kind result completes discards it before UI completion"
         }
+        . (Join-Path $PSScriptRoot 'Test-RecoveryCancellation.ps1')
+
         $script:PendingSecretRequest=[pscustomobject]@{VerificationGeneration=0}
         $script:LocalVerificationCancellation=[Threading.CancellationTokenSource]::new()
         $script:RecoveryRequestCanceled=$false
