@@ -1284,8 +1284,7 @@ param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $Co
         }
     }
     catch {
-        $statusCode = $null
-        if ($_.Exception.PSObject.Properties['ResponseStatusCode']) { $statusCode = [int]$_.Exception.ResponseStatusCode }
+        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
         $errorCode = if ($_.Exception.PSObject.Properties['ErrorCode']) { [string]$_.Exception.ErrorCode } else { [string]$_.FullyQualifiedErrorId }
         [pscustomobject]@{ Kind = 'Error'; ErrorCode = $errorCode; Message = [string]$_.Exception.Message; StatusCode = $statusCode }
     }
@@ -1513,22 +1512,40 @@ param($CoreModulePath)
 
         $items = [System.Collections.Generic.List[object]]::new()
         $visited = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $collectionPath = ([uri]$Uri).AbsolutePath
         $next = $Uri
         while (-not [string]::IsNullOrWhiteSpace($next)) {
             $pageUri = [uri]$next
             if (-not $pageUri.IsAbsoluteUri -or $pageUri.Scheme -ne 'https' -or
                 $pageUri.Host -ne 'graph.microsoft.com' -or -not $pageUri.IsDefaultPort -or
-                $pageUri.UserInfo -or $pageUri.Fragment -or -not $pageUri.AbsolutePath.StartsWith('/v1.0/')) {
+                $pageUri.UserInfo -or $pageUri.Fragment -or
+                -not [string]::Equals($pageUri.AbsolutePath, $collectionPath, [StringComparison]::Ordinal)) {
                 throw 'Microsoft Graph returned an untrusted inventory page link.'
             }
             if (-not $visited.Add($pageUri.AbsoluteUri) -or $visited.Count -gt 10000) {
                 throw 'Microsoft Graph inventory pagination did not complete safely.'
             }
             $response = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType PSObject -ErrorAction Stop
+            # A missing or malformed collection is not a successful empty page.
+            # Reject the refresh so the UI retains its last complete inventory.
+            if ($null -eq $response -or $null -eq $response.PSObject.Properties['value'] -or
+                $response.value -isnot [array]) {
+                throw 'Microsoft Graph returned a malformed inventory collection.'
+            }
             foreach ($item in @($response.value)) {
-                if ($null -ne $item) { $items.Add($item) }
+                $recordId = [guid]::Empty
+                if ($null -eq $item -or $item -isnot [pscustomobject] -or
+                    $null -eq $item.PSObject.Properties['id'] -or
+                    -not [guid]::TryParse([string]$item.id, [ref]$recordId) -or $recordId -eq [guid]::Empty) {
+                    throw 'Microsoft Graph returned a malformed inventory record.'
+                }
+                $items.Add($item)
             }
             $nextProperty = $response.PSObject.Properties['@odata.nextLink']
+            if ($null -ne $nextProperty -and $null -ne $nextProperty.Value -and
+                ($nextProperty.Value -isnot [string] -or [string]::IsNullOrWhiteSpace($nextProperty.Value))) {
+                throw 'Microsoft Graph returned a malformed inventory page link.'
+            }
             $next = if ($null -eq $nextProperty) { $null } else { [string]$nextProperty.Value }
         }
         return @($items)
@@ -1561,8 +1578,7 @@ param($CoreModulePath)
         }
     }
     catch {
-        $statusCode = $null
-        if ($_.Exception.PSObject.Properties['ResponseStatusCode']) { $statusCode = [int]$_.Exception.ResponseStatusCode }
+        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
         $errorCode = if ($_.Exception.PSObject.Properties['ErrorCode']) { [string]$_.Exception.ErrorCode } else { [string]$_.FullyQualifiedErrorId }
         [pscustomobject]@{ Kind = 'Error'; ErrorCode = $errorCode; Message = [string]$_.Exception.Message; StatusCode = $statusCode; Stage = $stage }
     }
@@ -1620,8 +1636,7 @@ param($DeviceId, $CoreModulePath)
         }
     }
     catch {
-        $statusCode = $null
-        if ($_.Exception.PSObject.Properties['ResponseStatusCode']) { $statusCode = [int]$_.Exception.ResponseStatusCode }
+        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
         $errorCode = if ([string]$_.Exception.Message -match '(?i)LAPS password payload') {
             'PasswordDecodeFailed'
         }
@@ -1689,8 +1704,7 @@ param($DeviceId, $RecoveryKeyId, $CoreModulePath)
         }
     }
     catch {
-        $statusCode = $null
-        if ($_.Exception.PSObject.Properties['ResponseStatusCode']) { $statusCode = [int]$_.Exception.ResponseStatusCode }
+        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
         $errorCode = if ([string]$_.Exception.Message -match '(?i)48-digit BitLocker') {
             'RecoveryKeyValidationFailed'
         }
