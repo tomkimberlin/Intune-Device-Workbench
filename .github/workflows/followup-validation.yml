@@ -1,0 +1,57 @@
+name: Follow-up compatibility and accessibility validation
+on:
+  push:
+    branches: [codex/followup-validation]
+permissions:
+  contents: read
+jobs:
+  powershell-minimum:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify the declared PowerShell 7.4 minimum in an isolated directory
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'PowerShell-7.4.0-win-x64.zip'
+          Invoke-WebRequest https://github.com/PowerShell/PowerShell/releases/download/v7.4.0/PowerShell-7.4.0-win-x64.zip -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '62151db1d98a8b56aeb249cc8a3ce17948f1c83b4062dac8d0c4302de71cbd75') { throw 'PowerShell archive checksum mismatch.' }
+          $runtime = Join-Path $env:RUNNER_TEMP 'powershell-7.4.0'
+          Expand-Archive $archive -DestinationPath $runtime
+          $exe = Join-Path $runtime 'pwsh.exe'
+          & $exe -NoLogo -NoProfile -Command '$PSVersionTable | Format-Table'
+          & $exe -NoLogo -NoProfile -STA -File .\Tests\Test-IntuneDeviceWorkbench.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe -NoLogo -NoProfile -STA -File .\Tests\Test-NativeClipboard.ps1 -AllowClipboardOverwrite
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe -NoLogo -NoProfile -STA -File .\IntuneDeviceWorkbench.ps1 -DemoMode -RenderPreviewPath "$env:RUNNER_TEMP\minimum-runtime.png"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  live-status-transport:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Exercise real WPF to UI Automation event delivery with synthetic text
+        shell: pwsh
+        run: |
+          $PSVersionTable | Format-Table
+          $baseline = Join-Path $env:RUNNER_TEMP 'IntuneDeviceWorkbench-before.ps1'
+          git show d90a9a9bee531b275f72a523cba778841a1b9474:IntuneDeviceWorkbench.ps1 | Set-Content $baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh.exe -NoLogo -NoProfile -MTA -File .\Validation\Test-LiveStatusTransport.ps1 -SourcePath $baseline -ExpectBaselineFailure -OutputPath "$env:RUNNER_TEMP\uia-before.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh.exe -NoLogo -NoProfile -MTA -File .\Validation\Test-LiveStatusTransport.ps1 -SourcePath "$pwd\IntuneDeviceWorkbench.ps1" -OutputPath "$env:RUNNER_TEMP\uia-after.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save synthetic UI Automation observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: synthetic-uia-observations
+          path: ${{ runner.temp }}/uia-*.json
+          if-no-files-found: warn
+          retention-days: 3
