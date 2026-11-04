@@ -71,7 +71,7 @@ pwsh.exe -NoLogo -NoProfile -File .\Install-DesktopShortcut.ps1
 
 Older `M365Workbench.ps1`, `Launch-M365Workbench.cmd`, and `Tests/Test-M365Workbench.ps1` entry points forward to the renamed commands. Existing settings, internal module/asset filenames, launcher storage and Windows app identity stay compatible. Update an existing checkout in place to keep its shortcuts working; rerun the shortcut installer for the new display name.
 
-The app reuses Microsoft Graph's secure `CurrentUser` token cache when a valid delegated context already exists. If sign-in is required, it displays a device code and opens Microsoft's sign-in page in the default browser.
+Each sign-in or reconnect asks Microsoft Graph to establish authentication, reusing its secure `CurrentUser` token cache when possible. Matching account and tenant metadata alone does not prove an expired session can still authenticate. If interactive sign-in is required, the app displays a device code and opens Microsoft's sign-in page in the default browser.
 
 By default, the first recovery action asks Windows to verify the current user with an available PIN, biometric, or Windows Hello method. That verification is remembered in process memory for ten minutes. If local Windows verification is unavailable, a fresh interactive Microsoft sign-in completed during app startup can satisfy the fallback for the remainder of the same fixed window. Otherwise, the app displays a new Microsoft device code without replacing or clearing the reusable Graph session. Conditional Access determines whether the Microsoft step also requires MFA; the app does not claim that a device-code completion is inherently MFA.
 
