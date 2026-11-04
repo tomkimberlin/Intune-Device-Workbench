@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 jobs:
-  live-status-transport:
+  demo-window:
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -13,22 +13,21 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Exercise real WPF to UI Automation event delivery with synthetic text
+      - name: Exercise the full demo window with an isolated Graph boundary
         shell: pwsh
         run: |
-          $PSVersionTable | Format-Table
-          $baseline = Join-Path $env:RUNNER_TEMP 'IntuneDeviceWorkbench-before.ps1'
-          git show d90a9a9bee531b275f72a523cba778841a1b9474:IntuneDeviceWorkbench.ps1 | Set-Content $baseline
+          $baseline = Join-Path $env:RUNNER_TEMP 'demo-baseline'
+          git worktree add --detach $baseline d90a9a9bee531b275f72a523cba778841a1b9474
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh.exe -NoLogo -NoProfile -MTA -File .\Validation\Test-LiveStatusTransport.ps1 -SourcePath $baseline -ExpectBaselineFailure -OutputPath "$env:RUNNER_TEMP\uia-before.json"
+          pwsh.exe -NoLogo -NoProfile -MTA -File .\Validation\Test-DemoWindow.ps1 -RepositoryPath $baseline -ExpectedGraphReads 4 -OutputPath "$env:RUNNER_TEMP\demo-before.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh.exe -NoLogo -NoProfile -MTA -File .\Validation\Test-LiveStatusTransport.ps1 -SourcePath "$pwd\IntuneDeviceWorkbench.ps1" -OutputPath "$env:RUNNER_TEMP\uia-after.json"
+          pwsh.exe -NoLogo -NoProfile -MTA -File .\Validation\Test-DemoWindow.ps1 -RepositoryPath "$pwd" -ExpectedGraphReads 0 -OutputPath "$env:RUNNER_TEMP\demo-after.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Save synthetic UI Automation observations
+      - name: Save synthetic demo observations
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: synthetic-uia-observations
-          path: ${{ runner.temp }}/uia-*.json
+          name: synthetic-demo-observations
+          path: ${{ runner.temp }}/demo-*.json
           if-no-files-found: warn
           retention-days: 3
