@@ -11,6 +11,18 @@ if($env:GITHUB_ACTIONS -ne 'true'){throw 'This SDK probe is restricted to dispos
 # open sockets; it rejects authentication headers and unexpected request URIs.
 Import-Module $ModulePath -ErrorAction Stop
 Import-Module (Join-Path $RepositoryPath 'M365Workbench.Core.psm1') -Force
+# SDK 2.41 isolates its core assembly in a private load context. Resolve the
+# already-loaded public type instead of loading a second copy into the default.
+$null=Get-MgContext
+function Get-SdkType([string]$Name) {
+    foreach($assembly in [AppDomain]::CurrentDomain.GetAssemblies()) {
+        $type=$assembly.GetType($Name,$false)
+        if($null -ne $type){return $type}
+    }
+    throw "The SDK did not load the required public type: $Name"
+}
+$sessionType=Get-SdkType 'Microsoft.Graph.PowerShell.Authentication.GraphSession'
+$authType=Get-SdkType 'Microsoft.Graph.PowerShell.Authentication.AuthContext'
 Add-Type -TypeDefinition @'
 using System;
 using System.Net;
@@ -76,6 +88,7 @@ foreach($revision in @($Baseline,$head)) {
     }
     foreach($kind in @('Credential','BitLockerKey')) {
         $script:GraphRunspace=$null;$script:GraphPowerShell=$null;$script:CurrentOperation=$null;$script:Exposed=0
+        $session=$null
         $transport=[SyntheticGraphTransport]::new()
         $client=[Net.Http.HttpClient]::new($transport)
         try {
@@ -85,8 +98,8 @@ foreach($revision in @($Baseline,$head)) {
             $null=$script:GraphPowerShell.AddScript('param($Path) Import-Module $Path -ErrorAction Stop').AddArgument($ModulePath)
             $null=$script:GraphPowerShell.Invoke()
             if($script:GraphPowerShell.HadErrors){throw 'Worker SDK import failed.'}
-            $session=[Microsoft.Graph.PowerShell.Authentication.GraphSession]::Instance
-            $auth=[Microsoft.Graph.PowerShell.Authentication.AuthContext]::new()
+            $session=$sessionType.GetProperty('Instance').GetValue($null)
+            $auth=[Activator]::CreateInstance($authType)
             $auth.Account='admin@contoso.com';$auth.TenantId='33333333-3333-4333-8333-333333333333';$auth.ContextScope='Process';$auth.AuthType='Delegated'
             $session.AuthContext=$auth
             $session.GraphHttpClient=$client
@@ -133,8 +146,7 @@ foreach($revision in @($Baseline,$head)) {
         finally {
             if($null -ne $script:GraphPowerShell){$script:GraphPowerShell.Stop();$script:GraphPowerShell.Dispose()}
             if($null -ne $script:GraphRunspace){$script:GraphRunspace.Close();$script:GraphRunspace.Dispose()}
-            [Microsoft.Graph.PowerShell.Authentication.GraphSession]::Instance.AuthContext=$null
-            [Microsoft.Graph.PowerShell.Authentication.GraphSession]::Instance.GraphHttpClient=$null
+            if($null -ne $session){$session.AuthContext=$null;$session.GraphHttpClient=$null}
             $client.Dispose();$transport.Started.Dispose()
         }
     }
