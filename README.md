@@ -146,6 +146,8 @@ See the [Windows smoke-test checklist](docs/WINDOWS-SMOKE-TEST.md) for remaining
 
 The offline suite parses the PowerShell and WPF markup and validates data joining, authentication-context enforcement, secret decoding, portal-link validation, metadata-only inventory, clipboard protection, the no-console launcher, and key UI regressions. It also executes the production recovery operations with synthetic Graph responses and tests clipboard race/cleanup behavior with native-call shims. It does not connect to Microsoft Graph or overwrite your clipboard. Generated test files are placed in a unique system temporary directory and cleaned up on exit.
 
+Graph-response tests use fresh worker runspaces to verify collection validation, pagination, HTTP error status handling, and the UI's expired-sign-in and failed-refresh behavior. See the [November 4 review](docs/QC-2026-11-04.md) for the reproduced failures and validation limits.
+
 See the [September 2026 audit notes](docs/AUDIT-2026-09-05.md) for fixed issues, verification coverage, and remaining limits.
 
 The [September 22 quality review](docs/QC-2026-09-22.md) covers recovery-card layout, large-inventory filtering, empty inventories, and expired sign-in handling.
