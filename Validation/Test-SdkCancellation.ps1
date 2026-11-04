@@ -35,6 +35,7 @@ public sealed class SyntheticGraphTransport : HttpMessageHandler {
     public int Calls;
     public int Canceled;
     public int DelayMs = 5000;
+    public HttpStatusCode ResponseStatus = HttpStatusCode.OK;
     public string ResponseJson;
     public string ExpectedUri;
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) {
@@ -44,7 +45,7 @@ public sealed class SyntheticGraphTransport : HttpMessageHandler {
         Started.Set();
         try { await Task.Delay(DelayMs, token).ConfigureAwait(false); }
         catch(OperationCanceledException) { Interlocked.Increment(ref Canceled); throw; }
-        return new HttpResponseMessage(HttpStatusCode.OK) {
+        return new HttpResponseMessage(ResponseStatus) {
             Content = new StringContent(ResponseJson, Encoding.UTF8, "application/json"), RequestMessage = request
         };
     }
@@ -76,6 +77,7 @@ function Wait-Completion {
     if($null -ne $script:CurrentOperation){throw 'Synthetic SDK completion exceeded its bound.'}
 }
 $results=[Collections.Generic.List[object]]::new()
+$responseResults=[Collections.Generic.List[object]]::new()
 $head=(& git -C $RepositoryPath rev-parse HEAD).Trim()
 foreach($revision in @($Baseline,$head)) {
     $source=(& git -C $RepositoryPath show "${revision}:IntuneDeviceWorkbench.ps1") -join "`n"
@@ -142,6 +144,35 @@ foreach($revision in @($Baseline,$head)) {
             Wait-Completion
             if($script:Exposed -ne 1 -or $transport.Calls -ne 2 -or $script:GraphRunspace.RunspaceAvailability -ne 'Available'){throw 'Normal SDK read after cancellation failed.'}
             $results.Add([pscustomobject]@{Revision=$revision;Operation=$kind;SdkVersion=(Get-Module Microsoft.Graph.Authentication).Version.ToString();SyntheticDelayMs=5000;UiReadyMs=[Math]::Round($elapsed,2);TransportObservedCancellation=($canceled -eq 1);CanceledExposureCount=0;ControlsRestored=$restored;AuthContextRetained=$contextRetained;SubsequentNormalReadPassed=$true;TransportCalls=$transport.Calls})
+            if($revision -ne $Baseline) {
+                # Exercise actual SDK exception shaping, not a handmade exception.
+                # These checks stop at the worker result; UI status/reconnect
+                # behavior is covered separately by the application's tests.
+                $operations=@($kind)
+                if($kind -eq 'BitLockerKey'){$operations+='Inventory'}
+                foreach($operationKind in $operations) {
+                    if($operationKind -eq 'Inventory') {
+                        $variable='$inventoryOperationScript'
+                        $body=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq $variable},$true).Right.Expression.Value
+                        $arguments=@($core)
+                        $transport.ExpectedUri="https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$select=id,deviceName,azureADDeviceId,serialNumber,operatingSystem,osVersion,model,manufacturer,lastSyncDateTime,complianceState,managementState,managedDeviceOwnerType,deviceEnrollmentType,isEncrypted,managementAgent,enrolledDateTime"
+                    }
+                    foreach($status in @(401,403,404,429,503)) {
+                        $transport.ResponseStatus=[Net.HttpStatusCode]$status
+                        $transport.ResponseJson='{"error":{"code":"SyntheticHttpFailure","message":"Synthetic status fixture"}}'
+                        $callsBefore=$transport.Calls
+                        $null=Start-GraphOperation -Name $operationKind -ScriptText $body -Arguments $arguments
+                        $operation=$script:CurrentOperation
+                        if(-not $operation.AsyncResult.AsyncWaitHandle.WaitOne(3000)){throw 'SDK error response did not finish.'}
+                        $null=$script:GraphPowerShell.EndInvoke($operation.AsyncResult)
+                        $result=Get-OperationResultObject -Operation $operation
+                        if($null -eq $result -or $result.Kind -ne 'Error' -or $result.StatusCode -ne $status -or $transport.Calls -ne $callsBefore+1){throw "Actual SDK HTTP $status was not preserved for $operationKind."}
+                        $responseResults.Add([pscustomobject]@{Operation=$operationKind;HttpStatus=$status;ReturnedStatus=[int]$result.StatusCode;Calls=($transport.Calls-$callsBefore);Passed=$true})
+                        $script:GraphPowerShell.Streams.ClearStreams()
+                        $operation.Output.Clear();$operation.Input.Dispose();$operation.Output.Dispose();$script:CurrentOperation=$null
+                    }
+                }
+            }
         }
         finally {
             if($null -ne $script:GraphPowerShell){$script:GraphPowerShell.Stop();$script:GraphPowerShell.Dispose()}
@@ -151,5 +182,5 @@ foreach($revision in @($Baseline,$head)) {
         }
     }
 }
-[pscustomobject]@{Results=@($results);Limits='Actual published Graph SDK 2.41.1 and production recovery bodies, worker and completion. In-memory HTTP transport with no socket implementation and synthetic auth context; no Connect-MgGraph, tokens, tenant, clipboard, screen reader or physical UI. Polling interval 10 ms.'}|ConvertTo-Json -Depth 6|Set-Content $OutputPath -Encoding utf8
-Write-Output 'PASS: four SDK cancellation/reuse scenarios, synthetic transport only.'
+[pscustomobject]@{Results=@($results);HttpResponses=@($responseResults);Limits='Actual published Graph SDK 2.41.1 and production operation bodies. Cancellation uses actual worker/completion; HTTP error checks inspect worker results only. In-memory HTTP transport with no socket implementation and synthetic auth context; no Connect-MgGraph, tokens, tenant, clipboard, screen reader or physical UI. Polling interval 10 ms.'}|ConvertTo-Json -Depth 6|Set-Content $OutputPath -Encoding utf8
+Write-Output 'PASS: four SDK cancellation/reuse scenarios and fifteen actual SDK HTTP-status checks, synthetic transport only.'
