@@ -69,12 +69,15 @@
         Assert-True -Condition ($script:WorkflowApplied -eq 1 -and $script:AllDevices[0] -eq 'new inventory') -Name 'A fresh background worker succeeds after a startup failure'
 
         # BeginStop is genuinely asynchronous; no synchronous Stop on the UI thread.
+        $AccountNameText.Text='DemoLapsAdmin'
+        $CopyAccountButton.IsEnabled=$true
         $inventoryOperationScript="Start-Sleep -Seconds 30; [pscustomobject]@{Kind='InventoryResult';Devices=@('must not apply');LoadedAt=[DateTimeOffset]::Now}"
         Start-InventoryLoad
         Assert-True -Condition ($RefreshButton.IsEnabled -and $RefreshButtonText.Text -eq 'Cancel' -and -not $CopyPasswordButton.IsEnabled -and -not $SignInButton.IsEnabled) -Name 'A running refresh exposes Cancel and prevents competing actions'
         Restore-SecretActionControls
         Update-OperationControls
         Assert-True -Condition ($RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled -and -not $SignInButton.IsEnabled) -Name 'Selection updates during refresh keep Cancel available without re-enabling competing actions'
+        Assert-True -Condition (-not $CopyAccountButton.IsEnabled) -Name 'Pending Graph work disables username copying even when an earlier recovery populated the account'
         $inFlight=$script:CurrentOperation
         $secondStarted=Start-GraphOperation -Name Inventory -ScriptText 'throw "must not run"'
         Assert-True -Condition (-not $secondStarted -and $script:CurrentOperation -eq $inFlight) -Name 'Only one background operation can run at a time'
@@ -83,6 +86,10 @@
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 1 -and $script:AllDevices[0] -eq 'new inventory' -and $script:WorkflowStatus -like 'Refresh canceled*') -Name 'Repeated Cancel safely stops a delayed refresh without replacing the previous inventory'
         Assert-True -Condition ($RefreshButton.IsEnabled -and $CopyPasswordButton.IsEnabled -and $SignInButton.IsEnabled -and $LoadingOverlay.Visibility -eq 'Collapsed') -Name 'Canceled refresh restores usable controls and hides loading overlays'
+        Assert-True -Condition $CopyAccountButton.IsEnabled -Name 'Canceling pending work restores the known username copy action'
+        $AccountNameText.Text='Retrieved with password'
+        Restore-SecretActionControls
+        Assert-True -Condition (-not $CopyAccountButton.IsEnabled) -Name 'Restoring controls never enables username copying before an account was retrieved'
 
         $inventoryOperationScript="[pscustomobject]@{Kind='InventoryResult';Devices=@('retry inventory');LoadedAt=[DateTimeOffset]::Now}"
         Start-InventoryLoad
