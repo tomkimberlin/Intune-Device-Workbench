@@ -310,6 +310,7 @@ $CopyDeviceDetailsButton = [pscustomobject]@{IsEnabled=$false}
 . (Join-Path $PSScriptRoot 'Test-Workflow.ps1')
 . (Join-Path $PSScriptRoot 'Test-InventoryRefresh.ps1')
 . (Join-Path $PSScriptRoot 'Test-SecurityBoundaries.ps1')
+. (Join-Path $PSScriptRoot 'Test-DemoBoundaries.ps1')
 . (Join-Path $PSScriptRoot 'Test-GraphResponses.ps1')
 . (Join-Path $PSScriptRoot 'Test-Authentication.ps1')
 . (Join-Path $PSScriptRoot 'Test-Accessibility.ps1')

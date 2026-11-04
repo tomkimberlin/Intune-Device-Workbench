@@ -109,6 +109,7 @@
 }
 
 & {
+    $DemoMode=$false
     foreach ($name in @('Complete-GraphOperation','Get-OperationResultObject','Restore-SecretActionControls','Reset-InventoryControls')) {
         . ([scriptblock]::Create($mainAst.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true).Extent.Text))
     }
