@@ -2,7 +2,7 @@
 # the actual key handler and operation entry points; never load the Graph SDK.
 & {
     Add-Type -AssemblyName PresentationFramework
-    foreach ($name in @('Start-InventoryLoad','Start-Authentication','Set-LiveStatusText')) {
+    foreach ($name in @('Start-InventoryLoad','Start-Authentication','Set-LiveStatusText','Restore-SecretActionControls')) {
         $node=$mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
         if ($null -ne $node) { . ([scriptblock]::Create($node.Extent.Text)) }
     }
@@ -26,6 +26,7 @@
     function Start-GraphOperation { param($Name,$ScriptText,$Arguments) $script:DemoGraphStarts.Add([string]$Name); return $true }
     function Set-InventoryLoadingState { $script:DemoUiChanges++ }
     function Get-SecretVerificationSnapshot { [pscustomobject]@{Generation=1} }
+    function Get-SelectedDevice { [pscustomobject]@{LapsAvailable=$true;BitLockerAvailable=$true;BitLockerKeys=@(1)} }
     function Set-AppStatus { param($Message,[switch]$Busy) $script:DemoUiChanges++ }
     function Set-AuthenticationDisplay { param($SignedIn,$Text) $script:IsSignedIn=$SignedIn; $script:DemoUiChanges++ }
     try {
@@ -58,6 +59,11 @@
             $AuthOverlay.Visibility='Collapsed'
             & $entryPoint
             Assert-True -Condition ($script:DemoGraphStarts.Count -eq 0 -and $script:DemoUiChanges -eq 0 -and $AuthOverlay.Visibility -eq 'Collapsed') -Name "Demo mode blocks $entryPoint at the operation boundary"
+        }
+        foreach ($demo in @($true,$false)) {
+            $DemoMode=$demo
+            Restore-SecretActionControls
+            Assert-True -Condition ($RefreshButton.IsEnabled -eq (-not $demo)) -Name "Recovery completion preserves the correct Refresh availability (demo=$demo)"
         }
     }
     finally { $window.Close() }

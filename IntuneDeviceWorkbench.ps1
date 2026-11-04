@@ -2141,7 +2141,7 @@ function Restore-SecretActionControls {
     $RevealRecoveryKeyButton.IsEnabled = $bitLockerAvailable
     $CopyRecoveryKeyButtonText.Text = 'Copy recovery key'
     $BitLockerKeySelector.IsEnabled = $null -ne $selected -and [bool]$selected.BitLockerAvailable -and @($selected.BitLockerKeys).Count -gt 1
-    $RefreshButton.IsEnabled = $true
+    $RefreshButton.IsEnabled = -not $DemoMode
     $SignInButton.IsEnabled = $true
 }
 
