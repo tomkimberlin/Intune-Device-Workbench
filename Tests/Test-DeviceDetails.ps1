@@ -46,6 +46,11 @@
     $copyAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Copy-SelectedDeviceDetails'},$true)
     $copySource=$copyAst.Extent.Text.Replace('[M365Workbench.Security.SecureClipboard]','[M365Workbench.TestDoubles.SecureClipboard]').Replace('([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle','[IntPtr]1')
     . ([scriptblock]::Create($copySource))
+    $accountAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -eq '$CopyAccountButton' -and $n.Member.Extent.Text -eq 'Add_Click'},$true)
+    $accountBody=$accountAst.Arguments[0].ScriptBlock.Extent.Text
+    $accountCopy=[scriptblock]::Create($accountBody.Substring(1,$accountBody.Length-2).Replace('[M365Workbench.Security.SecureClipboard]','[M365Workbench.TestDoubles.SecureClipboard]').Replace('([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle','[IntPtr]1'))
+    $AccountNameText=[pscustomobject]@{Text='DemoLapsAdmin'}
+    function Set-PasswordStatus { param($Message) }
     $selected=$device
     function Get-SelectedDevice { return $selected }
     function Get-SensitiveClockNow { return $script:DetailsClock }
@@ -101,8 +106,12 @@
         $before=[M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
         Copy-SelectedDeviceDetails
         Assert-Equal -Actual ([M365Workbench.TestDoubles.SecureClipboard]::EmptyCount) -Expected $before -Name "Details copy cannot compete with $block or copy a previous selection"
+        & $accountCopy
+        Assert-Equal -Actual ([M365Workbench.TestDoubles.SecureClipboard]::EmptyCount) -Expected $before -Name "Username copy cannot compete with $block or copy a previous selection"
     }
     $selected=$device; $script:CurrentOperation=$null; $script:PendingSecretRequest=$null; $script:LocalVerificationTask=$null
+    & $accountCopy
+    Assert-True -Condition ([M365Workbench.TestDoubles.SecureClipboard]::LastText -eq 'DemoLapsAdmin' -and $script:ClipboardKind -eq 'Account' -and $script:ClipboardClearAt -eq $script:DetailsClock.AddSeconds(20)) -Name 'Username copy works again after pending work ends and keeps its own protected-clipboard deadline'
     Copy-SelectedDeviceDetails
     $before=[M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
     [M365Workbench.TestDoubles.SecureClipboard]::ReplaceClipboard()
