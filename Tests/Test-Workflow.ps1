@@ -36,10 +36,12 @@
     function Set-DeviceInventory { param($Devices) $script:WorkflowApplied++; $script:AllDevices=@($Devices) }
     function Update-FilteredCount { }
     function Set-RecoveryActionFocus { param($Kind,$Action) }
-    function Clear-SecretDisplay { }
+    $script:WorkflowSecretClears=0
+    $script:WorkflowRevocations=0
+    function Clear-SecretDisplay { $script:WorkflowSecretClears++ }
     function Update-ClipboardStatusForSelection { }
     function Clear-AuthenticationClipboard { }
-    function Clear-SecretVerificationState { }
+    function Clear-SecretVerificationState { $script:WorkflowRevocations++ }
     function Set-AuthenticationDisplay { param($SignedIn,$Text) $script:IsSignedIn=$SignedIn }
     function Complete-CredentialAction { param($Action,$Credential) $script:WorkflowExposed++ }
     function Complete-BitLockerAction { param($Action,$KeyResult) $script:WorkflowExposed++ }
@@ -106,6 +108,35 @@
         Start-InventoryLoad
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 3 -and $script:IsSignedIn -and $script:WorkflowStatus -like '*Showing the previous inventory*' -and $RefreshButton.IsEnabled) -Name 'A failed refresh preserves sign-in and inventory and clearly labels the displayed data as previous'
+        # Run the real inventory body through the real worker/UI completion path.
+        # Only the Graph transport is replaced, using its actual exception shape.
+        $inventoryNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$inventoryOperationScript'},$true)
+        $coreModulePath=$modulePath
+        $inventoryOperationScript=@'
+param($CoreModulePath)
+function Invoke-MgGraphRequest {
+    $failure=[Net.Http.HttpRequestException]::new('Synthetic HTTP failure')
+    $failure | Add-Member -NotePropertyName Response -NotePropertyValue ([Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::Unauthorized))
+    throw $failure
+}
+& {
+'@ + $inventoryNode.Right.Expression.Value + "`n} `$CoreModulePath"
+        $revocationsBefore=$script:WorkflowRevocations
+        $clearsBefore=$script:WorkflowSecretClears
+        Start-InventoryLoad
+        Wait-WorkflowFixture
+        Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowRevocations -eq $revocationsBefore + 1 -and $script:WorkflowSecretClears -eq $clearsBefore + 1 -and $script:WorkflowStatus -like '*sign-in has expired*' -and $script:WorkflowApplied -eq 3) -Name 'An SDK-shaped 401 revokes recovery verification, clears displayed secrets, and requires sign-in without replacing inventory'
+        Assert-True -Condition ($SignInButton.IsEnabled -and $RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled -and -not $CopyRecoveryKeyButton.IsEnabled) -Name 'Expired sign-in leaves reconnect available while recovery actions are disabled'
+        $script:IsSignedIn=$true
+        $inventoryOperationScript=@'
+param($CoreModulePath)
+function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collection' } }
+& {
+'@ + $inventoryNode.Right.Expression.Value + "`n} `$CoreModulePath"
+        Start-InventoryLoad
+        Wait-WorkflowFixture
+        Assert-True -Condition ($script:WorkflowApplied -eq 3 -and $script:IsSignedIn -and $script:AllDevices.Count -eq 1 -and $script:WorkflowStatus -like '*Showing the previous inventory*' -and $RefreshButton.IsEnabled) -Name 'Malformed Graph inventory preserves the displayed inventory and restores Refresh through the actual UI completion path'
+        $coreModulePath='unused fixture'
         $inventoryOperationScript="Write-Progress -Activity 'Synthetic progress' -Status 'Running'; throw 'Synthetic unhandled failure'"
         Start-InventoryLoad
         Wait-WorkflowFixture

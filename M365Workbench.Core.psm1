@@ -858,6 +858,29 @@ function Get-SecretVerificationDecision {
     }
 }
 
+function Get-GraphErrorStatusCode {
+    [CmdletBinding()]
+    param([AllowNull()][System.Exception]$Exception)
+
+    if ($null -eq $Exception) { return $null }
+    # Generated Graph cmdlets and batch failures use ResponseStatusCode.
+    # Invoke-MgGraphRequest's HttpResponseException uses Response.StatusCode.
+    $response = Get-PropertyValue $Exception 'Response'
+    foreach ($value in @(
+        (Get-PropertyValue $Exception 'ResponseStatusCode')
+        (Get-PropertyValue $response 'StatusCode')
+        (Get-PropertyValue $Exception 'StatusCode')
+    )) {
+        if ($null -eq $value) { continue }
+        try {
+            $status = [int]$value
+            if ($status -ge 100 -and $status -le 599) { return $status }
+        }
+        catch { }
+    }
+    return $null
+}
+
 function Get-FriendlyLapsErrorMessage {
     [CmdletBinding()]
     param(
@@ -925,6 +948,7 @@ Export-ModuleMember -Function @(
     'Get-DeviceAdminPortalUri'
     'Get-DeviceCodeFromMessage'
     'Get-FriendlyLapsErrorMessage'
+    'Get-GraphErrorStatusCode'
     'Get-IntunePrimaryUserMap'
     'Get-SecretVerificationDecision'
     'Merge-IntuneLapsDeviceData'
