@@ -73,7 +73,7 @@ try {
     if(-not $ready.WaitOne(2000)){throw 'Synthetic 401 was not buffered.'}
     Cancel-PendingRecoveryAction
     Wait-WorkflowFixture
-    Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowRevocations -eq $revocationsBefore+1 -and $script:WorkflowToast -like '*sign-in has expired*') -Name 'Cancellation cannot hide a returned 401 or preserve an expired verification grant'
+    Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowRevocations -eq $revocationsBefore+1 -and $script:WorkflowToast -like '*requires you to sign in again*') -Name 'Cancellation cannot hide a returned 401 or preserve an expired verification grant'
 }
 finally { $ready.Dispose() }
 

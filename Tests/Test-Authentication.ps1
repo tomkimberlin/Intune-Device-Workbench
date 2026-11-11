@@ -29,8 +29,14 @@
                     Microsoft.PowerShell.Core\Import-Module -Name $Name -Force:$Force -ErrorAction Stop
                 }
                 function Get-MgContext { $script:Context }
+                function Set-MgRequestContext { param($ClientTimeout,$MaxRetry) }
+                function Invoke-MgGraphRequest {
+                    param($Method,$Uri,$OutputType,$ErrorAction)
+                    if(-not $script:SessionUsable) { throw 'Synthetic session was not authenticated.' }
+                    [pscustomobject]@{value=@([pscustomobject]@{id='DEMO-DEVICE-PROBE'})}
+                }
                 function Connect-MgGraph {
-                    param($TenantId, [switch]$UseDeviceCode, $Scopes, $ContextScope, [switch]$NoWelcome, $ErrorAction)
+                    param($TenantId, [switch]$UseDeviceCode, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, $ErrorAction)
                     $script:ConnectCalls++
                     $script:ConnectArguments = @{
                         TenantId = $TenantId; UseDeviceCode = [bool]$UseDeviceCode

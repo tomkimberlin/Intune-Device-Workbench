@@ -308,6 +308,7 @@ $mainSource = [IO.File]::ReadAllText($mainScriptPath)
 $CopyDeviceDetailsButton = [pscustomobject]@{IsEnabled=$false}
 . (Join-Path $PSScriptRoot 'Test-Quality.ps1')
 . (Join-Path $PSScriptRoot 'Test-Workflow.ps1')
+. (Join-Path $PSScriptRoot 'Test-Connection.ps1')
 . (Join-Path $PSScriptRoot 'Test-InventoryRefresh.ps1')
 . (Join-Path $PSScriptRoot 'Test-SecurityBoundaries.ps1')
 . (Join-Path $PSScriptRoot 'Test-DemoBoundaries.ps1')
