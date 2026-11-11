@@ -39,7 +39,7 @@ All screenshots, tests, and demo records use fictional `contoso` identities and 
 - `Microsoft.Graph.Authentication` 2.38.0 or later
 - A Microsoft Entra work or school account in the configured tenant
 
-Both the standard PowerShell installer and Microsoft Store installation are supported. The launcher also checks absolute directories on `PATH`. The window title identifies the current build as `2026.10.22`.
+Both the standard PowerShell installer and Microsoft Store installation are supported. The launcher also checks absolute directories on `PATH`. The window title identifies the current build as `2026.11.11`.
 
 ## Quick start
 
@@ -72,6 +72,8 @@ pwsh.exe -NoLogo -NoProfile -File .\Install-DesktopShortcut.ps1
 Older `M365Workbench.ps1`, `Launch-M365Workbench.cmd`, and `Tests/Test-M365Workbench.ps1` entry points forward to the renamed commands. Existing settings, internal module/asset filenames, launcher storage and Windows app identity stay compatible. Update an existing checkout in place to keep its shortcuts working; rerun the shortcut installer for the new display name.
 
 Each sign-in or reconnect asks Microsoft Graph to establish authentication, reusing its secure `CurrentUser` token cache when possible. Matching account and tenant metadata alone does not prove an expired session can still authenticate. If interactive sign-in is required, the app displays a device code and opens Microsoft's sign-in page in the default browser.
+
+Reconnect asks the SDK to establish authentication once, then verifies that the configured session can complete a live, metadata-only Microsoft Graph request before displaying a connected state. Network, DNS, VPN and timeout failures have separate guidance and do not claim the sign-in expired. If the connection cannot be verified, recovery actions are disabled and the previous inventory remains visible. Restore connectivity, then select **Refresh** or **Retry connection**; restarting the app is not required. Reconnect preserves the secure token cache and requests no additional scopes.
 
 By default, the first recovery action asks Windows to verify the current user with an available PIN, biometric, or Windows Hello method. That verification is remembered in process memory for ten minutes. If local Windows verification is unavailable, a fresh interactive Microsoft sign-in completed during app startup can satisfy the fallback for the remainder of the same fixed window. Otherwise, the app displays a new Microsoft device code without replacing or clearing the reusable Graph session. Conditional Access determines whether the Microsoft step also requires MFA; the app does not claim that a device-code completion is inherently MFA.
 

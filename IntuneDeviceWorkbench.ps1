@@ -118,7 +118,7 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne [Threading.Apartme
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Intune Device Workbench · 2026.10.22"
+        Title="Intune Device Workbench · 2026.11.11"
         Width="1280" Height="780" MinWidth="1100" MinHeight="680"
         WindowStartupLocation="CenterScreen"
         Background="#F5F7FB"
@@ -1247,44 +1247,31 @@ param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $Co
     Import-Module Microsoft.Graph.Authentication -MinimumVersion ([version]$MinimumGraphVersion) -ErrorAction Stop
 
     try {
-        # Context metadata can outlive a failed session. Let the SDK establish
-        # authentication on every sign-in/reconnect, reusing its secure cache.
-        Connect-MgGraph `
-            -TenantId $TenantId `
-            -UseDeviceCode `
-            -Scopes $RequiredScopes `
-            -ContextScope CurrentUser `
-            -NoWelcome `
-            -ErrorAction Stop
-
+        $null = Set-MgRequestContext -ClientTimeout 20 -MaxRetry 1
+        # Preserve the SDK reconnect even when old context metadata still matches.
+        # The SDK can reuse its secure cache; never clear it or loop over sign-ins.
+        $connectParameters = @{
+            TenantId=$TenantId; UseDeviceCode=$true; Scopes=$RequiredScopes
+            ContextScope='CurrentUser'; ClientTimeout=20; NoWelcome=$true; ErrorAction='Stop'
+        }
+        Connect-MgGraph @connectParameters
         $context = Get-MgContext
         $validation = Test-LapsGraphContext -Context $context -ExpectedAccount $ExpectedAccount -ExpectedTenantId $ExpectedTenantObjectId -RequiredScopes $RequiredScopes
-
         if (-not $validation.IsValid) {
-            [pscustomobject]@{
-                Kind = 'Error'
-                ErrorCode = $validation.Reason
-                Message = switch ($validation.Reason) {
-                    'WrongAccount' { "Signed in as $($context.Account), not $ExpectedAccount." }
-                    'WrongTenant' { "The Graph session is connected to tenant $($context.TenantId), not $ExpectedTenantObjectId." }
-                    default { "The Graph session is missing required scopes: $($validation.MissingScopes -join ', ')." }
-                }
-                StatusCode = $null
-            }
+            [pscustomobject]@{ Kind='Error'; ErrorCode=$validation.Reason; Message='The Graph context did not match the configured identity and permissions.'; StatusCode=$null }
             return
         }
 
+        # Context metadata is not proof that the token or connection works.
+        # A real request uses an existing scope and never retrieves recovery data.
+        $null = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/devices?$select=id&$top=1' -OutputType PSObject -ErrorAction Stop
         [pscustomobject]@{
-            Kind = 'AuthResult'
-            Account = [string]$context.Account
-            TenantId = [string]$context.TenantId
-            Scopes = @($context.Scopes)
+            Kind='AuthResult'; Account=[string]$context.Account; TenantId=[string]$context.TenantId
+            Scopes=@($context.Scopes); ConnectionVerified=$true
         }
     }
     catch {
-        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
-        $errorCode = if ($_.Exception.PSObject.Properties['ErrorCode']) { [string]$_.Exception.ErrorCode } else { [string]$_.FullyQualifiedErrorId }
-        [pscustomobject]@{ Kind = 'Error'; ErrorCode = $errorCode; Message = [string]$_.Exception.Message; StatusCode = $statusCode }
+        ConvertTo-GraphOperationError -ErrorRecord $_ -Stage 'connection verification'
     }
 }
 '@
@@ -1576,9 +1563,7 @@ param($CoreModulePath)
         }
     }
     catch {
-        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
-        $errorCode = if ($_.Exception.PSObject.Properties['ErrorCode']) { [string]$_.Exception.ErrorCode } else { [string]$_.FullyQualifiedErrorId }
-        [pscustomobject]@{ Kind = 'Error'; ErrorCode = $errorCode; Message = [string]$_.Exception.Message; StatusCode = $statusCode; Stage = $stage }
+        ConvertTo-GraphOperationError -ErrorRecord $_ -Stage $stage
     }
 }
 '@
@@ -1634,17 +1619,7 @@ param($DeviceId, $CoreModulePath)
         }
     }
     catch {
-        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
-        $errorCode = if ([string]$_.Exception.Message -match '(?i)LAPS password payload') {
-            'PasswordDecodeFailed'
-        }
-        elseif ($_.Exception.PSObject.Properties['ErrorCode']) {
-            [string]$_.Exception.ErrorCode
-        }
-        else {
-            [string]$_.FullyQualifiedErrorId
-        }
-        [pscustomobject]@{ Kind = 'Error'; ErrorCode = $errorCode; Message = [string]$_.Exception.Message; StatusCode = $statusCode }
+        ConvertTo-GraphOperationError -ErrorRecord $_
     }
     finally {
         if ($null -ne $response -and $null -ne $response.PSObject.Properties['credentials']) {
@@ -1702,17 +1677,7 @@ param($DeviceId, $RecoveryKeyId, $CoreModulePath)
         }
     }
     catch {
-        $statusCode = Get-GraphErrorStatusCode -Exception $_.Exception
-        $errorCode = if ([string]$_.Exception.Message -match '(?i)48-digit BitLocker') {
-            'RecoveryKeyValidationFailed'
-        }
-        elseif ($_.Exception.PSObject.Properties['ErrorCode']) {
-            [string]$_.Exception.ErrorCode
-        }
-        else {
-            [string]$_.FullyQualifiedErrorId
-        }
-        [pscustomobject]@{ Kind = 'Error'; ErrorCode = $errorCode; Message = [string]$_.Exception.Message; StatusCode = $statusCode }
+        ConvertTo-GraphOperationError -ErrorRecord $_
     }
     finally {
         if ($null -ne $response -and $null -ne $response.PSObject.Properties['key']) { $response.key = $null }
@@ -3316,11 +3281,21 @@ function Complete-GraphOperation {
             $AuthOverlay.Visibility = 'Collapsed'
             $script:AuthenticationVerificationGeneration = $null
         }
-        if ($operationName -eq 'Authenticate' -or $statusCode -eq 401) {
+        $failureCategory = Get-GraphFailureCategory -ErrorCode ([string]$result.ErrorCode) -Message ([string]$result.Message) -StatusCode $statusCode
+        if ($operationName -eq 'Authenticate' -or $failureCategory -in @('Authentication','Connectivity','Timeout','Service')) {
             Clear-AuthenticationClipboard
             Clear-SecretVerificationState
             Clear-SecretDisplay
-            Set-AuthenticationDisplay -SignedIn $false -Text 'Sign-in required'
+            $connectionText = switch ($failureCategory) {
+                'Authentication' { 'Sign-in required' }
+                'Connectivity' { 'Connection unavailable' }
+                'Timeout' { 'Connection timed out' }
+                'Service' { 'Microsoft unavailable' }
+                'Permission' { 'Access denied' }
+                default { 'Connection not verified' }
+            }
+            Set-AuthenticationDisplay -SignedIn $false -Text $connectionText
+            if ($failureCategory -ne 'Authentication') { $SignInButton.Content = 'Retry connection' }
             Restore-SecretActionControls
         }
         if ($operationName -eq 'Credential') {
@@ -3367,6 +3342,17 @@ function Complete-GraphOperation {
             $script:LastDeviceCode = $null
             $script:SignInPageOpenedForCode = $null
             $AuthOverlay.Visibility = 'Collapsed'
+            if ($null -eq $result.PSObject.Properties['ConnectionVerified'] -or -not [bool]$result.ConnectionVerified) {
+                $script:AuthenticationVerificationGeneration = $null
+                Clear-AuthenticationClipboard
+                Clear-SecretVerificationState
+                Clear-SecretDisplay
+                Set-AuthenticationDisplay -SignedIn $false -Text 'Connection not verified'
+                $SignInButton.Content = 'Retry connection'
+                Restore-SecretActionControls
+                Set-AppStatus -Message 'The Microsoft connection was not verified. Select Refresh to retry.'
+                return
+            }
             Set-AuthenticationDisplay -SignedIn $true -Text ([string]$result.Account)
             if ($script:AuthenticationDeviceCodeObserved -and $null -ne $script:AuthenticationVerificationGeneration) {
                 $null = Set-RecentInteractiveAuthentication -ExpectedGeneration ([int]$script:AuthenticationVerificationGeneration)

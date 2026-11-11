@@ -39,11 +39,11 @@
     function Set-RecoveryActionFocus { param($Kind,$Action) }
     $script:WorkflowSecretClears=0
     $script:WorkflowRevocations=0
-    function Clear-SecretDisplay { $script:WorkflowSecretClears++ }
+    function Clear-SecretDisplay { $script:WorkflowSecretClears++; $script:WorkflowSecretsHidden=$true }
     function Update-ClipboardStatusForSelection { }
     function Clear-AuthenticationClipboard { }
     function Clear-SecretVerificationState { $script:WorkflowRevocations++ }
-    function Set-AuthenticationDisplay { param($SignedIn,$Text) $script:IsSignedIn=$SignedIn }
+    function Set-AuthenticationDisplay { param($SignedIn,$Text) $script:IsSignedIn=$SignedIn; $script:WorkflowAuthText=$Text }
     function Complete-CredentialAction { param($Action,$Credential) $script:WorkflowExposed++ }
     function Complete-BitLockerAction { param($Action,$KeyResult) $script:WorkflowExposed++ }
     function Test-SecretVerificationGeneration { param($Generation) $null -ne $Generation }
@@ -115,7 +115,30 @@
         $inventoryOperationScript="[pscustomobject]@{Kind='Error';ErrorCode='ServiceUnavailable';Message='synthetic';StatusCode=503}"
         Start-InventoryLoad
         Wait-WorkflowFixture
-        Assert-True -Condition ($script:WorkflowApplied -eq 3 -and $script:IsSignedIn -and $script:WorkflowStatus -like '*Showing the previous inventory*' -and $RefreshButton.IsEnabled) -Name 'A failed refresh preserves sign-in and inventory and clearly labels the displayed data as previous'
+        Assert-True -Condition ($script:WorkflowApplied -eq 3 -and -not $script:IsSignedIn -and $script:WorkflowStatus -like '*Showing the previous inventory*' -and $RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled) -Name 'A service outage preserves inventory but removes verified connection state and disables recovery'
+
+        foreach($operationKind in @('Credential','BitLockerKey','Inventory','Authenticate')) {
+            $script:IsSignedIn=$true
+            $script:PendingCredentialAction='Copy'
+            $script:PendingBitLockerAction='Reveal'
+            $null=Start-GraphOperation -Name $operationKind -ScriptText "[pscustomobject]@{Kind='Error';ErrorCode='AuthenticationFailed';Message='Token acquisition failed: No such host is known';StatusCode=`$null}"
+            Wait-WorkflowFixture
+            Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowAuthText -eq 'Connection unavailable' -and $SignInButton.Content -eq 'Retry connection' -and -not $CopyPasswordButton.IsEnabled -and -not $CopyRecoveryKeyButton.IsEnabled -and $RefreshButton.IsEnabled -and $script:WorkflowStatus -like 'Cannot reach Microsoft*' -and $script:AllDevices[0] -eq 'retry inventory') -Name "Network failure never appears reconnected or expired and preserves old inventory: $operationKind"
+        }
+        $script:IsSignedIn=$true
+        $script:WorkflowSecretsHidden=$false
+        $null=Start-GraphOperation -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com'}"
+        Wait-WorkflowFixture
+        Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowApplied -eq 3 -and $script:WorkflowStatus -like '*not verified*' -and $script:WorkflowSecretsHidden) -Name 'Cached auth metadata without connection verification hides existing secrets and cannot enable recovery or launch inventory'
+
+        $script:AuthenticationDeviceCodeObserved=$false
+        $script:AuthenticationVerificationGeneration=$null
+        $inventoryOperationScript="[pscustomobject]@{Kind='InventoryResult';Devices=@('online retry inventory');LoadedAt=[DateTimeOffset]::Now}"
+        $null=Start-GraphOperation -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com';ConnectionVerified=`$true}"
+        Wait-WorkflowFixture
+        Assert-True -Condition ($script:IsSignedIn -and $script:WorkflowAuthText -eq 'admin@contoso.com' -and $script:WorkflowApplied -eq 4 -and $script:AllDevices[0] -eq 'online retry inventory' -and $CopyPasswordButton.IsEnabled) -Name 'Verified reconnect after network recovery reloads inventory and re-enables recovery without restarting'
+        $script:WorkflowApplied=3
+        $script:IsSignedIn=$true
         # Run the real inventory body through the real worker/UI completion path.
         # Only the Graph transport is replaced, using its actual exception shape.
         $inventoryNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$inventoryOperationScript'},$true)
@@ -133,7 +156,7 @@ function Invoke-MgGraphRequest {
         $clearsBefore=$script:WorkflowSecretClears
         Start-InventoryLoad
         Wait-WorkflowFixture
-        Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowRevocations -eq $revocationsBefore + 1 -and $script:WorkflowSecretClears -eq $clearsBefore + 1 -and $script:WorkflowStatus -like '*sign-in has expired*' -and $script:WorkflowApplied -eq 3) -Name 'An SDK-shaped 401 revokes recovery verification, clears displayed secrets, and requires sign-in without replacing inventory'
+        Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowRevocations -eq $revocationsBefore + 1 -and $script:WorkflowSecretClears -eq $clearsBefore + 1 -and $script:WorkflowStatus -like '*requires you to sign in again*' -and $script:WorkflowApplied -eq 3) -Name 'An SDK-shaped 401 revokes recovery verification, clears displayed secrets, and requires sign-in without replacing inventory'
         Assert-True -Condition ($SignInButton.IsEnabled -and $RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled -and -not $CopyRecoveryKeyButton.IsEnabled) -Name 'Expired sign-in leaves reconnect available while recovery actions are disabled'
         $script:IsSignedIn=$true
         $inventoryOperationScript=@'

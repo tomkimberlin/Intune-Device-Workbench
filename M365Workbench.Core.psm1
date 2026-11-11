@@ -881,20 +881,77 @@ function Get-GraphErrorStatusCode {
     return $null
 }
 
-function Get-FriendlyLapsErrorMessage {
+function Get-GraphFailureCategory {
     [CmdletBinding()]
     param(
-        [AllowNull()]
-        [string]$ErrorCode,
-
-        [AllowNull()]
-        [string]$Message,
-
-        [AllowNull()]
-        [Nullable[int]]$StatusCode
+        [AllowNull()][string]$ErrorCode,
+        [AllowNull()][string]$Message,
+        [AllowNull()][Nullable[int]]$StatusCode
     )
 
     $combined = "$ErrorCode $Message"
+    # OAuth's token endpoint uses HTTP 400 for explicit reauthentication errors.
+    # Do not confuse a Graph bad-request response or generic token wording with it.
+    if ($StatusCode -eq 400 -and $combined -match '(?i)\binvalid_grant\b|\binteraction_required\b|\blogin_required\b|MsalUiRequiredException|AADSTS(50058|50076|50079|50173|70043|700082)\b') { return 'Authentication' }
+    if ($StatusCode -eq 400 -and $combined -match '(?i)\bconsent_required\b|\bAADSTS65001\b') { return 'Consent' }
+    # An actual HTTP response otherwise outranks incidental words in an SDK exception.
+    switch ($StatusCode) {
+        401 { return 'Authentication' }
+        403 { return 'Permission' }
+        404 { return 'NotFound' }
+        407 { return 'Connectivity' }
+        408 { return 'Timeout' }
+        429 { return 'Throttled' }
+        511 { return 'Connectivity' }
+    }
+    if ($StatusCode -ge 500 -and $StatusCode -le 599) { return 'Service' }
+    if ($StatusCode -ge 100 -and $StatusCode -le 599) { return 'Unknown' }
+
+    if ($ErrorCode -in @('WrongAccount','WrongTenant','MissingScopes','NotDelegated','NoContext')) { return 'Authentication' }
+    # Token acquisition also needs a network. Transport failures are not proof
+    # that an administrator's sign-in has expired.
+    if ($combined -match '(?i)timed?\s*out|timeout|taskcanceled|operationcanceled') { return 'Timeout' }
+    if ($combined -match '(?i)name.?resolution|name.*could not.*resolv|no such host|host.*not.*known|server or proxy.*not.*found|dns|socketexception|network.*unreachable|network.*unavailable|network.*error|connection.*(refused|reset|closed|failed)|unable to connect|could not.*connect|cannot.*connect|proxy.*(tunnel|authentication|connect|not.*found)|error.*sending.*request|ssl|tls|certificate.*(invalid|trust)|temporar.*failure.*resolv') { return 'Connectivity' }
+    if ($combined -match '(?i)access.?denied|authorization_requestdenied|insufficient.?privilege') { return 'Permission' }
+    if ($combined -match '(?i)invalid[_-]?authentication[_-]?token|expired[_-]?authentication[_-]?token|authenticationexpired|invalidauthenticationtoken|invalid_grant|interaction_required|login_required|MsalUiRequiredException|AADSTS(50058|50076|50079|50173|70043|700082)|token (has )?expired|refresh token.*expired|reauthentication.*required') { return 'Authentication' }
+    if ($combined -match '(?i)not.?found|resource.?not.?found') { return 'NotFound' }
+    if ($combined -match '(?i)too.?many.?requests|throttl') { return 'Throttled' }
+    if ($combined -match '(?i)consent') { return 'Consent' }
+    return 'Unknown'
+}
+
+function ConvertTo-GraphOperationError {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][Management.Automation.ErrorRecord]$ErrorRecord,
+        [string]$Stage
+    )
+
+    $statusCode = $null
+    $errorCode = [string]$ErrorRecord.FullyQualifiedErrorId
+    $messages = [Collections.Generic.List[string]]::new()
+    $exception = $ErrorRecord.Exception
+    for ($depth = 0; $null -ne $exception -and $depth -lt 10; $depth++) {
+        $messages.Add($exception.GetType().Name + ': ' + $exception.Message)
+        $exceptionStatus = Get-GraphErrorStatusCode -Exception $exception
+        if ($null -ne $exceptionStatus) { $statusCode = $exceptionStatus }
+        if ($exception.PSObject.Properties['ErrorCode'] -and -not [string]::IsNullOrWhiteSpace([string]$exception.ErrorCode)) {
+            $errorCode = [string]$exception.ErrorCode
+        }
+        $exception = $exception.InnerException
+    }
+    # Details stay in memory only. UI text is always chosen from fixed messages.
+    return [pscustomobject]@{ Kind='Error'; ErrorCode=$errorCode; Message=($messages -join ' '); StatusCode=$statusCode; Stage=$Stage }
+}
+
+function Get-FriendlyLapsErrorMessage {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$ErrorCode,
+        [AllowNull()][string]$Message,
+        [AllowNull()][Nullable[int]]$StatusCode
+    )
+
     if ($ErrorCode -eq 'WorkerStartFailed') {
         return 'The local background worker could not start. Retry the action; if it happens again, close and reopen Workbench.'
     }
@@ -904,40 +961,23 @@ function Get-FriendlyLapsErrorMessage {
         'MissingScopes' { return 'Microsoft sign-in is missing required Graph permissions. Check administrator consent, then reconnect.' }
         'NotDelegated' { return 'This workspace requires a delegated administrator sign-in. Reconnect using the configured account.' }
     }
-    # Status is authoritative; incidental words such as "token" must not turn a
-    # service outage or access denial into misleading expired-sign-in guidance.
-    if ($StatusCode -ge 500 -and $StatusCode -le 599) {
-        return 'Microsoft Graph is temporarily unavailable. Wait a moment and retry.'
+    switch (Get-GraphFailureCategory -ErrorCode $ErrorCode -Message $Message -StatusCode $StatusCode) {
+        'Connectivity' { return 'Cannot reach Microsoft services. Check your network or VPN connection, then select Refresh to retry. Your sign-in could not be verified.' }
+        'Timeout' { return 'The Microsoft request timed out. Check your network or VPN connection, then select Refresh to retry. Your sign-in could not be verified.' }
+        'Authentication' { return 'Microsoft requires you to sign in again. Select Sign in, then retry your action.' }
+        'Permission' { return 'Access was denied. Check the configured Graph recovery permissions and use an eligible Entra role such as Cloud Device Administrator or Intune Administrator.' }
+        'NotFound' { return 'No current recovery secret was found for the selected record. Refresh the device inventory and retry.' }
+        'Throttled' { return 'Microsoft Graph is temporarily throttling requests. Wait a moment and retry.' }
+        'Service' { return 'Microsoft Graph is temporarily unavailable. Wait a moment and retry.' }
+        'Consent' { return "Administrator consent is required for this tool's Microsoft Graph permissions." }
     }
-    if ($StatusCode -eq 408) {
-        return 'The Microsoft Graph request timed out. Check the network connection and retry.'
-    }
-    if ($StatusCode -ge 100 -and $StatusCode -le 599) { $combined = '' }
-    if ($StatusCode -eq 401 -or $combined -match '(?i)authentication|token|sign.?in') {
-        return 'Your Microsoft Graph sign-in has expired. Sign in again and retry.'
-    }
-    if ($StatusCode -eq 403 -or $combined -match '(?i)access.?denied|authorization_requestdenied|insufficient.?privilege') {
-        return 'Access was denied. Check the configured Graph recovery permissions and use an eligible Entra role such as Cloud Device Administrator or Intune Administrator.'
-    }
-    if ($StatusCode -eq 404 -or $combined -match '(?i)not.?found|resource.?not.?found') {
-        return 'No current recovery secret was found for the selected record. Refresh the device inventory and retry.'
-    }
-    if ($StatusCode -eq 429 -or $combined -match '(?i)too.?many.?requests|throttl') {
-        return 'Microsoft Graph is temporarily throttling requests. Wait a moment and retry.'
-    }
-    if ($combined -match '(?i)consent') {
-        return "Administrator consent is required for this tool's Microsoft Graph permissions."
-    }
-    if ($combined -match '(?i)timed?\s*out|timeout|taskcanceled|operationcanceled') {
-        return 'The Microsoft Graph request timed out. Check the network connection and retry.'
-    }
+    $combined = "$ErrorCode $Message"
     if ($combined -match '(?i)password.?payload|decoded.?safely|passworddecodefailed') {
         return 'Microsoft Graph returned a LAPS password payload that this utility could not decode safely. Close and reopen the updated utility, then retry.'
     }
     if ($combined -match '(?i)48-digit BitLocker|recoverykeyvalidationfailed|different device') {
         return 'Microsoft Graph returned an invalid or mismatched BitLocker recovery-key payload. Refresh the device inventory and retry.'
     }
-
     return 'Microsoft Graph could not complete the request. Retry, then check the tenant connection and permissions if the problem continues.'
 }
 
@@ -949,6 +989,8 @@ Export-ModuleMember -Function @(
     'Get-DeviceCodeFromMessage'
     'Get-FriendlyLapsErrorMessage'
     'Get-GraphErrorStatusCode'
+    'Get-GraphFailureCategory'
+    'ConvertTo-GraphOperationError'
     'Get-IntunePrimaryUserMap'
     'Get-SecretVerificationDecision'
     'Merge-IntuneLapsDeviceData'
