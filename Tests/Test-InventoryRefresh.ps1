@@ -2,7 +2,7 @@
 # fictional metadata only. No window, authentication, or tenant connection is used.
 & {
     Add-Type -AssemblyName PresentationFramework
-    foreach ($functionName in @('Update-FilteredCount', 'Refresh-DeviceFilter', 'Set-DeviceInventory','Get-InventorySelectionId')) {
+    foreach ($functionName in @('Update-FilteredCount', 'Get-DeviceFilter', 'Refresh-DeviceFilter', 'Set-DeviceInventory','Get-InventorySelectionId')) {
         $functionAst = $mainAst.Find({ param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
         }, $true)
@@ -88,8 +88,17 @@
     $OnlyReadyCheckBox.IsChecked=$false
     Set-DeviceInventory @($pendingA,$pendingB)
     $DeviceGrid.SelectedItem=$pendingB
+    $selectedDuringRefresh = [Collections.Generic.List[object]]::new()
+    $observeSelection = [Windows.Controls.SelectionChangedEventHandler]{
+        param($sender, $e)
+        foreach ($row in $e.AddedItems) { $selectedDuringRefresh.Add($row) }
+    }
+    $DeviceGrid.Add_SelectionChanged($observeSelection)
     Set-DeviceInventory @($pendingA,$pendingB)
+    $DeviceGrid.Remove_SelectionChanged($observeSelection)
     Assert-True -Condition ($DeviceGrid.SelectedItem -eq $pendingB) -Name 'Selection uses the Intune ID when multiple devices have no valid Entra ID'
+    Assert-True -Condition (-not $selectedDuringRefresh.Contains($pendingA)) -Name 'Restoring a selection never briefly selects a different computer'
+    Assert-True -Condition ($null -eq $script:DeviceView.Filter) -Name 'An unfiltered inventory skips the per-row search predicate'
     $OnlyReadyCheckBox.IsChecked=$true
 
     # Measure representative inventory work without a machine-dependent time assertion.

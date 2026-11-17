@@ -660,23 +660,18 @@ function Select-CurrentLapsCredential {
         [object[]]$Credentials
     )
 
-    $usable = @(
-        $Credentials | Where-Object {
-            $null -ne $_ -and
-            -not [string]::IsNullOrWhiteSpace([string](Get-PropertyValue -InputObject $_ -Name 'passwordBase64'))
+    $selected = $null
+    $newestDate = [DateTimeOffset]::MinValue
+    foreach ($credential in $Credentials) {
+        if ([string]::IsNullOrWhiteSpace([string](Get-PropertyValue $credential 'passwordBase64'))) { continue }
+
+        $date = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue $credential 'backupDateTime')
+        if ($null -eq $selected -or $date -gt $newestDate) {
+            $selected = $credential
+            $newestDate = $date ?? [DateTimeOffset]::MinValue
         }
-    )
-
-    if ($usable.Count -eq 0) {
-        return $null
     }
-
-    return $usable |
-        Sort-Object -Property @{ Expression = {
-            $date = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue -InputObject $_ -Name 'backupDateTime')
-            if ($null -eq $date) { [DateTimeOffset]::MinValue } else { $date }
-        }; Descending = $true } |
-        Select-Object -First 1
+    return $selected
 }
 
 function ConvertFrom-LapsPasswordBase64 {

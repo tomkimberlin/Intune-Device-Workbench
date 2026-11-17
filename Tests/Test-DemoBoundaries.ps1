@@ -15,14 +15,14 @@
     $keyHandler=[scriptblock]::Create($keyText.Substring(1,$keyText.Length-2))
     $settings=@{TenantId='contoso.onmicrosoft.com';TenantObjectId='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';ExpectedAccount='admin@contoso.com';RequiredScopes=@('Device.Read.All');GraphModuleMinimumVersion='2.38.0'}
     $coreModulePath=$modulePath
-    $inventoryOperationScript='unused synthetic boundary'
-    $authOperationScript='unused synthetic boundary'
+
+
     $script:CurrentOperation=$null
     $script:PendingSecretRequest=$null
     $script:LocalVerificationTask=$null
-    function Start-GraphOperation { param($Name,$ScriptText,$Arguments) $script:DemoGraphStarts.Add([string]$Name); return $true }
+    function Start-GraphOperation { param($Name,$Arguments) $script:DemoGraphStarts.Add([string]$Name); return $true }
     function Set-InventoryLoadingState { $script:DemoUiChanges++ }
-    function Get-SecretVerificationSnapshot { [pscustomobject]@{Generation=1} }
+    $script:SecretVerificationGeneration = 1
     function Get-SelectedDevice { [pscustomobject]@{LapsAvailable=$true;BitLockerAvailable=$true;BitLockerKeys=@(1)} }
     function Set-AppStatus { param($Message,[switch]$Busy) $script:DemoUiChanges++ }
     function Set-AuthenticationDisplay { param($SignedIn,$Text) $script:IsSignedIn=$SignedIn; $script:DemoUiChanges++ }

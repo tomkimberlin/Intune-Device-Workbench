@@ -82,17 +82,13 @@
     function Get-SensitiveClockNow { return $script:QualityClock }
     function Set-SecretActionBusy { param($Kind) }
     function Set-AppStatus { param($Message,[switch]$Busy) }
-    function Start-GraphOperation { param($Name,$ScriptText,$Arguments) $script:QualityReads++; return $true }
+    function Start-GraphOperation { param($Name,$Arguments) $script:QualityReads++; return $true }
     function Complete-CredentialAction { param($Action,$Credential) $script:QualityCacheUses++ }
     function Complete-BitLockerAction { param($Action,$KeyResult) $script:QualityCacheUses++ }
-    $credentialOperationScript = 'unused fixture'
-    $bitLockerKeyOperationScript = 'unused fixture'
     $script:CurrentOperation = $null
-    $script:CurrentCredential = [pscustomobject]@{Password='synthetic'}
-    $script:CurrentCredentialDeviceId = '11111111-1111-4111-8111-111111111111'
-    $script:CurrentBitLockerKey = [pscustomobject]@{RecoveryKey='synthetic'}
-    $script:CurrentBitLockerDeviceId = $script:CurrentCredentialDeviceId
-    $script:CurrentBitLockerKeyId = $BitLockerKeySelector.SelectedItem.Id
+    $script:RevealedSecretKind = $null
+    $script:CurrentCredential = [pscustomobject]@{ Password='synthetic'; DeviceId='11111111-1111-4111-8111-111111111111' }
+    $script:CurrentBitLockerKey = [pscustomobject]@{ RecoveryKey='synthetic'; DeviceId=$script:CurrentCredential.DeviceId; RecoveryKeyId=$BitLockerKeySelector.SelectedItem.Id }
     foreach ($expired in @($false,$true)) {
         $script:QualityClock = [DateTimeOffset]::Parse($(if($expired){'2099-01-01Z'}else{'2000-01-01Z'}))
         $script:CredentialExpiresAt = $script:QualityClock.AddSeconds($(if($expired){-1}else{20}))

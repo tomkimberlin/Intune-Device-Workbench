@@ -1,14 +1,4 @@
 # Runs inside Test-IntuneDeviceWorkbench.ps1. All Graph data and secrets below are synthetic.
-function Get-OperationFixture {
-    param([string]$Name)
-    $assignment = $mainAst.Find({
-        param($node)
-        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-        $node.Left.Extent.Text -eq ('$' + $Name)
-    }, $true)
-    return [scriptblock]::Create($assignment.Right.Expression.Value)
-}
-
 foreach ($outcome in @('Canceled', 'TimedOut', 'Error', 'RetriesExhausted')) {
     $decision = Get-SecretVerificationDecision -Mode Preferred -VerifiedUntil $verificationNow.AddMinutes(1) -LocalResult $outcome -Now $verificationNow
     Assert-True -Condition ($decision -ne 'Grant') -Name "Explicit $outcome cannot be overridden by an existing verification grant"
@@ -16,9 +6,9 @@ foreach ($outcome in @('Canceled', 'TimedOut', 'Error', 'RetriesExhausted')) {
 Assert-True -Condition (-not (Test-BitLockerRecoveryKey ('١٢٣٤٥٦-' * 7 + '١٢٣٤٥٦'))) -Name 'Recovery-key validation rejects non-ASCII digits'
 Assert-True -Condition (-not (Test-BitLockerRecoveryKey (('123456-' * 7 + '123456') + "`n"))) -Name 'Recovery-key validation rejects a trailing newline'
 
-$lapsOperation = Get-OperationFixture 'credentialOperationScript'
-$keyOperation = Get-OperationFixture 'bitLockerKeyOperationScript'
-$inventoryOperation = Get-OperationFixture 'inventoryOperationScript'
+$lapsOperation = Join-Path $productionOperations 'Credential.ps1'
+$keyOperation = Join-Path $productionOperations 'BitLockerKey.ps1'
+$inventoryOperation = Join-Path $productionOperations 'Inventory.ps1'
 $deviceIdFixture = '11111111-1111-4111-8111-111111111111'
 $keyIdFixture = '22222222-2222-4222-8222-222222222222'
 $differentIdFixture = '33333333-3333-4333-8333-333333333333'
@@ -38,80 +28,82 @@ function New-KeyResponseFixture {
     [pscustomobject]@{ id=$Id; deviceId=$DeviceId; key=$Key; createdDateTime='2026-09-01T12:00:00Z'; volumeType='operatingSystemVolume' }
 }
 
+$graphFixture = @{ RequestCount=0; Response=$null; Pagination=$null }
+
 # Invoke the production operation bodies with a scoped Graph replacement, never a token.
 & {
     function Invoke-MgGraphRequest {
         param($Method, $Uri, $OutputType, $ErrorAction)
-        $script:FixtureRequestCount++
-        return $script:GraphResponseFixture
+        $graphFixture.RequestCount++
+        return $graphFixture.Response
     }
-    $script:FixtureRequestCount = 0
-    $script:GraphResponseFixture = New-LapsResponseFixture
+    $graphFixture.RequestCount = 0
+    $graphFixture.Response = New-LapsResponseFixture
     $result = @(& $lapsOperation $deviceIdFixture $modulePath)
     Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'CredentialResult' -and $result[0].Password -eq $plainPassword) -Name 'Actual LAPS operation decodes only the selected device response'
-    Assert-True -Condition (@($script:GraphResponseFixture.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'LAPS success releases encoded values from every returned credential'
+    Assert-True -Condition (@($graphFixture.Response.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'LAPS success releases encoded values from every returned credential'
     $record = New-LapsResponseFixture
     $record.credentials = @($record.credentials[0])
     $record.credentials[0].PSObject.Properties.Remove('backupDateTime')
-    $script:GraphResponseFixture = [pscustomobject]@{value=@($record)}
+    $graphFixture.Response = [pscustomobject]@{value=@($record)}
     $result = @(& $lapsOperation $deviceIdFixture $modulePath)
     Assert-True -Condition ($result[0].Kind -eq 'CredentialResult' -and $result[0].Password -eq $plainPassword -and
         $null -eq $record.credentials[0].passwordBase64) -Name 'One wrapped response can omit an optional backup time and still releases encoded data'
     $records = @((New-LapsResponseFixture), (New-LapsResponseFixture -Id $differentIdFixture))
-    $script:GraphResponseFixture = [pscustomobject]@{value=$records}
+    $graphFixture.Response = [pscustomobject]@{value=$records}
     $result = @(& $lapsOperation $deviceIdFixture $modulePath)
     Assert-True -Condition ($result[0].ErrorCode -eq 'LapsDeviceMismatch' -and
         @($records.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'Ambiguous LAPS responses are discarded and every returned record is scrubbed'
     foreach ($badId in @($differentIdFixture, '', 'not-a-guid')) {
-        $script:GraphResponseFixture = New-LapsResponseFixture -Id $badId
+        $graphFixture.Response = New-LapsResponseFixture -Id $badId
         $result = @(& $lapsOperation $deviceIdFixture $modulePath)
         Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'Error') -Name 'Actual LAPS operation rejects mismatched or invalid response identity'
-        Assert-True -Condition (@($script:GraphResponseFixture.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'Rejected LAPS identity releases all encoded credential fields'
+        Assert-True -Condition (@($graphFixture.Response.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'Rejected LAPS identity releases all encoded credential fields'
     }
-    $script:GraphResponseFixture = New-LapsResponseFixture -Payload '!!!'
+    $graphFixture.Response = New-LapsResponseFixture -Payload '!!!'
     $result = @(& $lapsOperation $deviceIdFixture $modulePath)
-    Assert-True -Condition ($result[0].Kind -eq 'Error' -and @($script:GraphResponseFixture.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'Malformed LAPS payload fails closed and releases all encoded fields'
-    $before = $script:FixtureRequestCount
+    Assert-True -Condition ($result[0].Kind -eq 'Error' -and @($graphFixture.Response.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'Malformed LAPS payload fails closed and releases all encoded fields'
+    $before = $graphFixture.RequestCount
     $result = @(& $lapsOperation 'not-a-guid' $modulePath)
-    Assert-True -Condition ($result[0].Kind -eq 'Error' -and $script:FixtureRequestCount -eq $before) -Name 'Invalid LAPS request makes no Graph call'
+    Assert-True -Condition ($result[0].Kind -eq 'Error' -and $graphFixture.RequestCount -eq $before) -Name 'Invalid LAPS request makes no Graph call'
 
-    $script:GraphResponseFixture = New-KeyResponseFixture -DeviceId ('{' + $deviceIdFixture + '}')
-    $script:GraphResponseFixture.PSObject.Properties.Remove('createdDateTime')
+    $graphFixture.Response = New-KeyResponseFixture -DeviceId ('{' + $deviceIdFixture + '}')
+    $graphFixture.Response.PSObject.Properties.Remove('createdDateTime')
     $result = @(& $keyOperation $deviceIdFixture $keyIdFixture $modulePath)
     Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'BitLockerKeyResult') -Name 'Actual BitLocker operation accepts a matching device and key ID'
-    Assert-True -Condition ($null -eq $script:GraphResponseFixture.key) -Name 'BitLocker success releases the response secret field'
+    Assert-True -Condition ($null -eq $graphFixture.Response.key) -Name 'BitLocker success releases the response secret field'
     foreach ($badResponse in @(
         (New-KeyResponseFixture -Id $differentIdFixture)
         (New-KeyResponseFixture -DeviceId $differentIdFixture)
         (New-KeyResponseFixture -Id '')
         (New-KeyResponseFixture -Key 'malformed')
     )) {
-        $script:GraphResponseFixture = $badResponse
+        $graphFixture.Response = $badResponse
         $result = @(& $keyOperation $deviceIdFixture $keyIdFixture $modulePath)
         Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'Error' -and $null -eq $badResponse.key) -Name 'Actual BitLocker operation rejects bad identity/payload and releases the response secret'
     }
-    $before = $script:FixtureRequestCount
+    $before = $graphFixture.RequestCount
     $result = @(& $keyOperation $deviceIdFixture 'not-a-guid' $modulePath)
-    Assert-True -Condition ($result[0].Kind -eq 'Error' -and $script:FixtureRequestCount -eq $before) -Name 'Invalid recovery-key request makes no Graph call'
+    Assert-True -Condition ($result[0].Kind -eq 'Error' -and $graphFixture.RequestCount -eq $before) -Name 'Invalid recovery-key request makes no Graph call'
 }
 
 & {
     function Invoke-MgGraphRequest {
         param($Method, $Uri, $OutputType, $ErrorAction)
-        $script:FixtureRequestCount++
-        $next = if ($script:PaginationFixture -eq 'Cycle') { $Uri } else { $script:PaginationFixture }
+        $graphFixture.RequestCount++
+        $next = if ($graphFixture.Pagination -eq 'Cycle') { $Uri } else { $graphFixture.Pagination }
         return [pscustomobject]@{ value=@(); '@odata.nextLink'=$next }
     }
     foreach ($nextLink in @('https://example.com/v1.0/devices', 'http://graph.microsoft.com/v1.0/devices', 'https://graph.microsoft.com:444/v1.0/devices', '/v1.0/devices', 'Cycle')) {
-        $script:PaginationFixture = $nextLink
-        $script:FixtureRequestCount = 0
+        $graphFixture.Pagination = $nextLink
+        $graphFixture.RequestCount = 0
         $result = @(& $inventoryOperation $modulePath)
-        Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'Error' -and $script:FixtureRequestCount -eq 1) -Name "Inventory rejects unsafe pagination before following it: $nextLink"
+        Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'Error' -and $graphFixture.RequestCount -eq 1) -Name "Inventory rejects unsafe pagination before following it: $nextLink"
     }
-    $script:PaginationFixture = $null
-    $script:FixtureRequestCount = 0
+    $graphFixture.Pagination = $null
+    $graphFixture.RequestCount = 0
     $result = @(& $inventoryOperation $modulePath)
-    Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'InventoryResult' -and $script:FixtureRequestCount -eq 4) -Name 'Empty inventory terminates all four metadata collections normally'
+    Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'InventoryResult' -and $graphFixture.RequestCount -eq 4) -Name 'Empty inventory terminates all four metadata collections normally'
 }
 
 $previewGuard = $mainAst.Find({ param($node) $node -is [System.Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.Contains("throw 'Preview rendering requires") }, $true)
@@ -260,6 +252,7 @@ Assert-True -Condition ($readFailed -and [M365Workbench.TestDoubles.SecureClipbo
     $tickAst = $mainAst.Find({ param($node) $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Expression.Extent.Text -eq '$pollTimer' -and $node.Member.Extent.Text -eq 'Add_Tick' }, $true)
     $tickBody = $tickAst.Arguments[0].ScriptBlock.Extent.Text
     $tick = [scriptblock]::Create($tickBody.Substring(1, $tickBody.Length - 2).Replace('[M365Workbench.Security.SecureClipboard]', '[M365Workbench.TestDoubles.SecureClipboard]'))
+    $script:RevealedSecretKind = $null
     $script:TickTimeFixture = $verificationNow
     $script:LocalVerificationTask = $null
     $script:ToastExpiresAt = [DateTimeOffset]::MinValue

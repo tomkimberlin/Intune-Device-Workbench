@@ -28,6 +28,8 @@ Use the [Windows smoke-test checklist](docs/WINDOWS-SMOKE-TEST.md) for interacti
 
 Edit `assets/WorkbenchWindow.xaml` for window layout changes. Workbench and the offline rendering and accessibility tests load this same file.
 
+The scripts in `Operations/` handle Microsoft sign-in, inventory and recovery requests. The window runs them in the background. The offline tests call the same scripts with synthetic responses.
+
 ## Pull requests
 
 - Keep changes focused and explain the operator workflow they improve.
