@@ -1,11 +1,8 @@
 # Real WPF layout at the supported minimum/default sizes. No tenant data or clipboard writes.
 & {
     Add-Type -AssemblyName PresentationFramework
-    $xamlAst = $mainAst.Find({param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'}, $true)
     foreach ($size in @(@(1100,680), @(1280,780), @(1600,900))) {
-        $reader = [System.Xml.XmlNodeReader]::new([xml]$xamlAst.Right.Expression.Value)
-        $qualityWindow = [System.Windows.Markup.XamlReader]::Load($reader)
-        $reader.Close()
+        $qualityWindow = [System.Windows.Markup.XamlReader]::Parse($windowMarkup)
         $qualityWindow.FindName('DetailPanel').Visibility = 'Visible'
         $qualityWindow.FindName('NoSelectionPanel').Visibility = 'Collapsed'
         $qualityWindow.FindName('AuthOverlay').Visibility = 'Collapsed'

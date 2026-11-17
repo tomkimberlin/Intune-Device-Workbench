@@ -2,14 +2,7 @@
 # actual message from accessibility clients even though the window looks correct.
 & {
     Add-Type -AssemblyName PresentationFramework
-    $xamlNode = $mainAst.Find({
-        param($node)
-        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
-        $node.Left.Extent.Text -eq '$xaml'
-    }, $true)
-    $reader = [System.Xml.XmlNodeReader]::new([xml]$xamlNode.Right.Expression.Value)
-    $accessibilityWindow = [System.Windows.Markup.XamlReader]::Load($reader)
-    $reader.Close()
+    $accessibilityWindow = [System.Windows.Markup.XamlReader]::Parse($windowMarkup)
     try {
         foreach ($name in @('Set-LiveStatusText', 'Set-AppStatus', 'Show-Toast', 'Stop-SecretVerification')) {
             . ([scriptblock]::Create($mainAst.Find({

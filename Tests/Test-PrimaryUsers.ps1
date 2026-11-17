@@ -18,7 +18,7 @@
 # without modifying the module, authenticating, or making network requests.
 & {
     $coreAst=[Management.Automation.Language.Parser]::ParseFile($modulePath,[ref]$null,[ref]$null)
-    foreach($name in @('Get-PropertyValue','Test-UsableEntraDeviceId','Get-IntunePrimaryUserMap')) {
+    foreach($name in @('Get-PropertyValue','ConvertTo-DeviceId','Get-IntunePrimaryUserMap')) {
         . ([scriptblock]::Create($coreAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true).Extent.Text))
     }
     $devices=@(1..21 | ForEach-Object {[pscustomobject]@{id=('11111111-1111-4111-8111-{0:000000000000}' -f $_);operatingSystem='Windows'}})
@@ -37,6 +37,8 @@
                 Empty {$page.value=@()}
                 MissingValue {$page=[pscustomobject]@{}}
                 NullValue {$page.value=$null}
+                BlankContinuation {$page | Add-Member -NotePropertyName '@odata.nextLink' -NotePropertyValue ' '}
+                ArrayContinuation {$page | Add-Member -NotePropertyName '@odata.nextLink' -NotePropertyValue @()}
                 BadUser {$page.value=@([pscustomobject]@{displayName='Not identifiable'})}
                 Pagination {
                     if($request.url -notmatch 'skiptoken') { $page | Add-Member -NotePropertyName '@odata.nextLink' -NotePropertyValue ('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/'+$deviceId+'/users?$skiptoken=page2') }
@@ -62,7 +64,10 @@
     $script:PrimaryFixtureMode='Pagination';$script:PrimaryFixtureCalls=0
     $map=Get-IntunePrimaryUserMap -ManagedDevices @($devices[0])
     Assert-True -Condition ($map[$devices[0].id].Count -eq 2 -and $script:PrimaryFixtureCalls -eq 2) -Name 'Primary-user pagination is completed before publishing assignments'
-    foreach($mode in @('MissingValue','NullValue','BadUser','MissingResponse','DuplicateResponse','UnknownResponse','Cycle')) {
+    $alternate = [pscustomobject]@{ id=([guid]$devices[0].id).ToString('B'); operatingSystem='Windows' }
+    $map = Get-IntunePrimaryUserMap -ManagedDevices @($alternate)
+    Assert-True -Condition ($map[$alternate.id].Count -eq 2 -and $script:PrimaryFixtureReadOnly) -Name 'Primary-user requests use canonical GUIDs while results retain the input record ID'
+    foreach($mode in @('MissingValue','NullValue','BlankContinuation','ArrayContinuation','BadUser','MissingResponse','DuplicateResponse','UnknownResponse','Cycle')) {
         $script:PrimaryFixtureMode=$mode; $rejected=$false
         try {$null=Get-IntunePrimaryUserMap -ManagedDevices @($devices[0],$devices[1])} catch {$rejected=$true}
         Assert-True -Condition $rejected -Name "Invalid primary-user response is rejected instead of becoming Unassigned: $mode"

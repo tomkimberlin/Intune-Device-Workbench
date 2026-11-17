@@ -1,14 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 
 namespace M365Workbench
 {
-    internal static class Launcher
+    public static class Launcher
     {
         [STAThread]
-        private static int Main(string[] args)
+        public static int Main(string[] args)
         {
             try
             {
@@ -58,22 +59,31 @@ namespace M365Workbench
         {
             // Prefer the machine installation; the Store alias is not the only
             // supported way to install PowerShell 7.
-            string[] candidates = {
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", "pwsh.exe")
+            var directories = new List<string> {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps")
             };
-            foreach (string candidate in candidates)
-                if (File.Exists(candidate)) return candidate;
-            foreach (string entry in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+            directories.AddRange((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator));
+            return FindPowerShell(directories);
+        }
+
+        private static string FindPowerShell(IEnumerable<string> directories)
+        {
+            foreach (string entry in directories)
             {
                 string directory = entry.Trim().Trim('"');
-                if (directory.Length == 0 || !Path.IsPathRooted(directory)) continue;
                 try
                 {
+                    // An absolute drive or UNC root has at least three characters.
+                    // A single separator or a bare drive letter depends on the working directory.
+                    string root = Path.GetPathRoot(directory);
+                    if (String.IsNullOrEmpty(root) || root.Length < 3) continue;
                     string candidate = Path.Combine(directory, "pwsh.exe");
                     if (File.Exists(candidate)) return candidate;
                 }
                 catch (ArgumentException) { }
+                catch (NotSupportedException) { }
+                catch (PathTooLongException) { }
             }
             throw new FileNotFoundException("PowerShell 7.4 or newer is required. Install PowerShell, then open Intune Device Workbench again.");
         }

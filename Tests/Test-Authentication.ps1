@@ -33,7 +33,7 @@
                 function Invoke-MgGraphRequest {
                     param($Method,$Uri,$OutputType,$ErrorAction)
                     if(-not $script:SessionUsable) { throw 'Synthetic session was not authenticated.' }
-                    [pscustomobject]@{value=@([pscustomobject]@{id='DEMO-DEVICE-PROBE'})}
+                    [pscustomobject]@{value=@([pscustomobject]@{id='11111111-1111-4111-8111-111111111111'})}
                 }
                 function Connect-MgGraph {
                     param($TenantId, [switch]$UseDeviceCode, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, $ErrorAction)
@@ -52,8 +52,8 @@
                         Scopes = @('Device.Read.All', 'DeviceManagementManagedDevices.Read.All')
                     }
                     if ($Scenario -ne 'Cached') {
-                        # The SDK's DeviceCodeCallback writes code.Message to output.
-                        'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code A1B2C3D4E to authenticate.'
+                        $prompt = 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code A1B2C3D4E to authenticate.'
+                        if ($Scenario -eq 'InformationPrompt') { Write-Host $prompt } else { $prompt }
                     }
                     switch ($Scenario) {
                         'WrongAccount' { $script:Context.Account = 'other@contoso.com' }
@@ -82,6 +82,8 @@
     $stale = Invoke-AuthenticationFixture 'Expired'
     Assert-True -Condition ($stale.ConnectCalls -eq 1 -and $stale.SessionUsable -and $stale.Results.Count -eq 1 -and $stale.Results[0].Kind -eq 'AuthResult') -Name 'Reconnect establishes authentication even when an expired session still has matching account, tenant, and scope metadata'
     Assert-True -Condition ($stale.Codes.Count -eq 1 -and $stale.Codes[0].UserCode -eq 'A1B2C3D4E') -Name 'A fresh reconnect device-code prompt reaches the existing UI output stream'
+    $informationPrompt = Invoke-AuthenticationFixture 'InformationPrompt'
+    Assert-True -Condition ($informationPrompt.Codes.Count -eq 1 -and $informationPrompt.Codes[0].UserCode -eq 'A1B2C3D4E') -Name 'The sign-in UI also accepts SDK device-code prompts written to the host information stream'
 
     $cached = Invoke-AuthenticationFixture 'Cached'
     Assert-True -Condition ($cached.ConnectCalls -eq 1 -and $cached.Results.Count -eq 1 -and $cached.Results[0].Kind -eq 'AuthResult' -and $cached.Codes.Count -eq 0) -Name 'Sign-in lets the SDK reuse a valid cache without inventing an interactive verification grant'

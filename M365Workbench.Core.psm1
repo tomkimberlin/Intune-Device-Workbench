@@ -39,14 +39,59 @@ function ConvertTo-LapsDateTimeOffset {
     }
 }
 
-function Test-UsableEntraDeviceId {
+function Get-WorkbenchTimeoutSeconds {
     param(
-        [AllowNull()]
-        [object]$Value
+        [Parameter(Mandatory)][hashtable]$Settings,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][int]$Default
     )
+    if (-not $Settings.ContainsKey($Name)) { return $Default }
+    $seconds = 0
+    if (-not [int]::TryParse([string]$Settings[$Name], [ref]$seconds) -or $seconds -lt 0) {
+        throw "$Name must be a nonnegative whole number of seconds."
+    }
+    return $seconds
+}
 
-    $parsed = [Guid]::Empty
-    return [Guid]::TryParse([string]$Value, [ref]$parsed) -and $parsed -ne [Guid]::Empty
+function ConvertTo-DeviceId {
+    param([AllowNull()][object]$Value)
+
+    $id = [guid]::Empty
+    if ([guid]::TryParse([string]$Value, [ref]$id) -and $id -ne [guid]::Empty) {
+        return $id.ToString('D')
+    }
+}
+
+function Read-GraphCollectionPage {
+    param([AllowNull()][object]$Response, [Parameter(Mandatory)][string]$CollectionPath)
+
+    if ($null -eq $Response -or $null -eq $Response.PSObject.Properties['value'] -or
+        $Response.value -isnot [array]) {
+        throw 'Microsoft Graph returned a malformed collection.'
+    }
+    foreach ($record in $Response.value) {
+        $id = [guid]::Empty
+        if ($record -isnot [pscustomobject] -or $null -eq $record.PSObject.Properties['id'] -or
+            ($record.id -isnot [string] -and $record.id -isnot [guid]) -or
+            -not [guid]::TryParse([string]$record.id, [ref]$id) -or $id -eq [guid]::Empty) {
+            throw 'Microsoft Graph returned a malformed collection record.'
+        }
+    }
+
+    $link = $Response.PSObject.Properties['@odata.nextLink']
+    $next = $null
+    if ($null -ne $link -and $null -ne $link.Value) {
+        $next = $link.Value
+        $uri = $null
+        if ($next -isnot [string] -or -not [uri]::TryCreate($next, [UriKind]::Absolute, [ref]$uri) -or
+            $uri.Scheme -ne 'https' -or $uri.Host -ne 'graph.microsoft.com' -or -not $uri.IsDefaultPort -or
+            $uri.UserInfo -or $uri.Fragment -or
+            -not [string]::Equals($uri.AbsolutePath, $CollectionPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Microsoft Graph returned an invalid collection page link.'
+        }
+    }
+    # Keep the opaque continuation string exactly as Graph supplied it.
+    return [pscustomobject]@{ Items = $Response.value; NextLink = $next }
 }
 
 function Get-DeviceAdminPortalUri {
@@ -227,17 +272,17 @@ function New-LapsDeviceRow {
         $deviceName = 'Unnamed device'
     }
 
-    $entraDeviceId = [string](Get-PropertyValue -InputObject $ManagedDevice -Name 'azureADDeviceId')
-    if (-not (Test-UsableEntraDeviceId -Value $entraDeviceId)) {
-        $entraDeviceId = [string](Get-PropertyValue -InputObject $LapsMetadata -Name 'id')
+    $entraDeviceId = ConvertTo-DeviceId (Get-PropertyValue $ManagedDevice 'azureADDeviceId')
+    if (-not $entraDeviceId) {
+        $entraDeviceId = ConvertTo-DeviceId (Get-PropertyValue $LapsMetadata 'id')
     }
-    if (-not (Test-UsableEntraDeviceId -Value $entraDeviceId)) {
-        $entraDeviceId = [string](Get-PropertyValue -InputObject $EntraDevice -Name 'deviceId')
+    if (-not $entraDeviceId) {
+        $entraDeviceId = ConvertTo-DeviceId (Get-PropertyValue $EntraDevice 'deviceId')
     }
-    if (-not (Test-UsableEntraDeviceId -Value $entraDeviceId)) {
-        $firstBitLockerItem = @($BitLockerMetadata | Where-Object { $null -ne $_ } | Select-Object -First 1)
-        if ($firstBitLockerItem.Count -gt 0) {
-            $entraDeviceId = [string](Get-PropertyValue -InputObject $firstBitLockerItem[0] -Name 'deviceId')
+    if (-not $entraDeviceId) {
+        foreach ($item in $BitLockerMetadata) {
+            $entraDeviceId = ConvertTo-DeviceId (Get-PropertyValue $item 'deviceId')
+            if ($entraDeviceId) { break }
         }
     }
 
@@ -263,7 +308,7 @@ function New-LapsDeviceRow {
     $lastSync = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue -InputObject $ManagedDevice -Name 'lastSyncDateTime')
     $lastBackup = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue -InputObject $LapsMetadata -Name 'lastBackupDateTime')
     $refreshDate = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue -InputObject $LapsMetadata -Name 'refreshDateTime')
-    $lapsAvailable = $null -ne $LapsMetadata -and (Test-UsableEntraDeviceId -Value $entraDeviceId)
+    $lapsAvailable = $null -ne $LapsMetadata -and [bool]$entraDeviceId
     $model = [string](Get-PropertyValue -InputObject $ManagedDevice -Name 'model')
     if ([string]::IsNullOrWhiteSpace($model)) {
         $model = [string](Get-PropertyValue -InputObject $EntraDevice -Name 'model')
@@ -285,11 +330,9 @@ function New-LapsDeviceRow {
             continue
         }
 
-        $keyId = [string](Get-PropertyValue -InputObject $metadata -Name 'id')
-        $keyDeviceId = [string](Get-PropertyValue -InputObject $metadata -Name 'deviceId')
-        if (-not (Test-UsableEntraDeviceId -Value $keyId) -or
-            -not (Test-UsableEntraDeviceId -Value $keyDeviceId) -or
-            -not [string]::Equals($keyDeviceId, $entraDeviceId, [StringComparison]::OrdinalIgnoreCase)) {
+        $keyId = ConvertTo-DeviceId (Get-PropertyValue $metadata 'id')
+        $keyDeviceId = ConvertTo-DeviceId (Get-PropertyValue $metadata 'deviceId')
+        if (-not $keyId -or -not $keyDeviceId -or $keyDeviceId -ne $entraDeviceId) {
             continue
         }
 
@@ -363,7 +406,7 @@ function New-LapsDeviceRow {
 
     [pscustomobject]@{
         IntuneDeviceId       = [string](Get-PropertyValue -InputObject $ManagedDevice -Name 'id')
-        EntraDeviceId        = $entraDeviceId
+        EntraDeviceId        = [string]$entraDeviceId
         EntraObjectId        = [string](Get-PropertyValue -InputObject $EntraDevice -Name 'id')
         DeviceName           = $deviceName
         PrimaryUser          = $primaryUser
@@ -414,8 +457,9 @@ function New-LapsDeviceRow {
 }
 
 function Merge-IntuneLapsDeviceData {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName='Records')]
     param(
+        [Parameter(ParameterSetName='Records')]
         [AllowNull()]
         [object[]]$ManagedDevices,
 
@@ -429,7 +473,10 @@ function Merge-IntuneLapsDeviceData {
         [object[]]$EntraDevices,
 
         [AllowNull()]
-        [System.Collections.IDictionary]$PrimaryUsersByManagedDeviceId
+        [System.Collections.IDictionary]$PrimaryUsersByManagedDeviceId,
+
+        [Parameter(Mandatory, ParameterSetName='Indexed')]
+        [System.Collections.IDictionary]$CurrentManagedDevices
     )
 
     $lapsById = @{}
@@ -438,9 +485,9 @@ function Merge-IntuneLapsDeviceData {
             continue
         }
 
-        $id = [string](Get-PropertyValue -InputObject $metadata -Name 'id')
-        if (Test-UsableEntraDeviceId -Value $id) {
-            $lapsById[$id.ToLowerInvariant()] = $metadata
+        $id = ConvertTo-DeviceId (Get-PropertyValue $metadata 'id')
+        if ($id) {
+            $lapsById[$id] = $metadata
         }
     }
 
@@ -450,9 +497,9 @@ function Merge-IntuneLapsDeviceData {
             continue
         }
 
-        $deviceId = [string](Get-PropertyValue -InputObject $device -Name 'deviceId')
-        if (Test-UsableEntraDeviceId -Value $deviceId) {
-            $entraByDeviceId[$deviceId.ToLowerInvariant()] = $device
+        $deviceId = ConvertTo-DeviceId (Get-PropertyValue $device 'deviceId')
+        if ($deviceId) {
+            $entraByDeviceId[$deviceId] = $device
         }
     }
 
@@ -462,64 +509,33 @@ function Merge-IntuneLapsDeviceData {
             continue
         }
 
-        $deviceId = [string](Get-PropertyValue -InputObject $metadata -Name 'deviceId')
-        if (-not (Test-UsableEntraDeviceId -Value $deviceId)) {
+        $deviceId = ConvertTo-DeviceId (Get-PropertyValue $metadata 'deviceId')
+        if (-not $deviceId) {
             continue
         }
 
-        $key = $deviceId.ToLowerInvariant()
-        if (-not $bitLockerByDeviceId.ContainsKey($key)) {
-            $bitLockerByDeviceId[$key] = [System.Collections.Generic.List[object]]::new()
+        if (-not $bitLockerByDeviceId.ContainsKey($deviceId)) {
+            $bitLockerByDeviceId[$deviceId] = [System.Collections.Generic.List[object]]::new()
         }
-        $bitLockerByDeviceId[$key].Add($metadata)
+        $bitLockerByDeviceId[$deviceId].Add($metadata)
     }
 
-    # Intune sometimes retains multiple managedDevice records for one Entra device.
-    # Keep only the record with the newest check-in so the operator sees one computer.
-    $managedByKey = @{}
-    foreach ($device in @($ManagedDevices)) {
-        if ($null -eq $device) {
-            continue
-        }
-
-        $operatingSystem = [string](Get-PropertyValue -InputObject $device -Name 'operatingSystem')
-        if (-not [string]::Equals($operatingSystem, 'Windows', [StringComparison]::OrdinalIgnoreCase)) {
-            continue
-        }
-
-        $entraId = [string](Get-PropertyValue -InputObject $device -Name 'azureADDeviceId')
-        $intuneId = [string](Get-PropertyValue -InputObject $device -Name 'id')
-        $key = if (Test-UsableEntraDeviceId -Value $entraId) {
-            'entra:' + $entraId.ToLowerInvariant()
-        }
-        else {
-            'intune:' + $intuneId.ToLowerInvariant()
-        }
-
-        $candidateDate = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue -InputObject $device -Name 'lastSyncDateTime')
-        if (-not $managedByKey.ContainsKey($key)) {
-            $managedByKey[$key] = $device
-            continue
-        }
-
-        $existingDate = ConvertTo-LapsDateTimeOffset -Value (Get-PropertyValue -InputObject $managedByKey[$key] -Name 'lastSyncDateTime')
-        if ($null -ne $candidateDate -and ($null -eq $existingDate -or $candidateDate -gt $existingDate)) {
-            $managedByKey[$key] = $device
-        }
+    if ($PSCmdlet.ParameterSetName -eq 'Records') {
+        $CurrentManagedDevices = Get-CurrentManagedDeviceMap -ManagedDevices $ManagedDevices
     }
 
     $rows = [System.Collections.Generic.List[object]]::new()
     $usedDeviceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
-    foreach ($device in $managedByKey.Values) {
-        $entraId = [string](Get-PropertyValue -InputObject $device -Name 'azureADDeviceId')
+    foreach ($device in $CurrentManagedDevices.Values) {
+        $entraId = ConvertTo-DeviceId (Get-PropertyValue $device 'azureADDeviceId')
         $metadata = $null
         $bitLocker = @()
         $entraDevice = $null
-        if (Test-UsableEntraDeviceId -Value $entraId) {
-            $metadata = $lapsById[$entraId.ToLowerInvariant()]
-            $bitLocker = @($bitLockerByDeviceId[$entraId.ToLowerInvariant()])
-            $entraDevice = $entraByDeviceId[$entraId.ToLowerInvariant()]
+        if ($entraId) {
+            $metadata = $lapsById[$entraId]
+            $bitLocker = $bitLockerByDeviceId[$entraId]
+            $entraDevice = $entraByDeviceId[$entraId]
             $null = $usedDeviceIds.Add($entraId)
         }
 
@@ -551,6 +567,24 @@ function Merge-IntuneLapsDeviceData {
     return @($rows | Sort-Object DeviceName, UserPrincipalName)
 }
 
+function Get-CurrentManagedDeviceMap {
+    param([AllowNull()][object[]]$ManagedDevices)
+
+    $current = @{}
+    foreach ($device in $ManagedDevices) {
+        if ((Get-PropertyValue $device 'operatingSystem') -ne 'Windows') { continue }
+        $entraId = ConvertTo-DeviceId (Get-PropertyValue $device 'azureADDeviceId')
+        $key = if ($entraId) { "entra:$entraId" } else { 'intune:' + (Get-PropertyValue $device 'id') }
+        if ($current.ContainsKey($key)) {
+            $previousSync = ConvertTo-LapsDateTimeOffset (Get-PropertyValue $current[$key] 'lastSyncDateTime')
+            $candidateSync = ConvertTo-LapsDateTimeOffset (Get-PropertyValue $device 'lastSyncDateTime')
+            if ($null -eq $candidateSync -or ($null -ne $previousSync -and $candidateSync -le $previousSync)) { continue }
+        }
+        $current[$key] = $device
+    }
+    return $current
+}
+
 function Get-IntunePrimaryUserMap {
     [CmdletBinding()]
     param([AllowNull()][object[]]$ManagedDevices)
@@ -561,12 +595,14 @@ function Get-IntunePrimaryUserMap {
     foreach ($device in @($ManagedDevices)) {
         if ((Get-PropertyValue $device 'operatingSystem') -ne 'Windows') { continue }
         $id = [string](Get-PropertyValue $device 'id')
-        if (-not (Test-UsableEntraDeviceId $id)) { throw 'Intune returned an invalid managed-device ID.' }
+        $canonicalId = ConvertTo-DeviceId $id
+        if (-not $canonicalId) { throw 'Intune returned an invalid managed-device ID.' }
         if ($usersById.ContainsKey($id)) { continue }
         $usersById[$id] = [System.Collections.Generic.List[object]]::new()
-        $url = '/deviceManagement/managedDevices/' + [uri]::EscapeDataString($id) + '/users?$select=id,displayName,userPrincipalName'
+        $path = '/deviceManagement/managedDevices/' + $canonicalId + '/users'
+        $url = $path + '?$select=id,displayName,userPrincipalName'
         $null = $visited.Add($url)
-        $pending.Enqueue([pscustomobject]@{ DeviceId=$id; Url=$url; Page=1 })
+        $pending.Enqueue([pscustomobject]@{ DeviceId=$id; Path=$path; Url=$url; Page=1 })
     }
 
     while ($pending.Count -gt 0) {
@@ -599,28 +635,16 @@ function Get-IntunePrimaryUserMap {
                 $failure | Add-Member -NotePropertyName ErrorCode -NotePropertyValue 'PrimaryUserLookupFailed'
                 throw $failure
             }
-            $page = Get-PropertyValue $response 'body'
-            if ($null -eq $page -or $null -eq $page.PSObject.Properties['value'] -or $null -eq $page.value -or
-                $page.value -isnot [System.Collections.IEnumerable] -or $page.value -is [string]) {
-                throw 'Malformed Intune primary-user collection.'
-            }
-            foreach ($user in @($page.value)) {
-                if (-not (Test-UsableEntraDeviceId ([string](Get-PropertyValue $user 'id')))) {
-                    throw 'Malformed Intune primary-user record.'
-                }
-                $usersById[$item.DeviceId].Add($user)
-            }
-            $nextLink = [string](Get-PropertyValue $page '@odata.nextLink')
-            if (-not [string]::IsNullOrWhiteSpace($nextLink)) {
-                $nextUri = [uri]$nextLink
-                $expectedPath = '/v1.0/deviceManagement/managedDevices/' + [uri]::EscapeDataString($item.DeviceId) + '/users'
-                if (-not $nextUri.IsAbsoluteUri -or $nextUri.Scheme -ne 'https' -or $nextUri.Host -ne 'graph.microsoft.com' -or
-                    -not $nextUri.IsDefaultPort -or $nextUri.UserInfo -or $nextUri.Fragment -or $nextUri.AbsolutePath -ne $expectedPath) {
-                    throw 'Untrusted Intune primary-user page link.'
-                }
-                $nextUrl = $nextUri.PathAndQuery.Substring('/v1.0'.Length)
+            $page = Read-GraphCollectionPage -Response (Get-PropertyValue $response 'body') -CollectionPath ('/v1.0' + $item.Path)
+            $usersById[$item.DeviceId].AddRange([object[]]$page.Items)
+            if ($page.NextLink) {
+                $nextUrl = $item.Path
+                $queryStart = $page.NextLink.IndexOf('?')
+                if ($queryStart -ge 0) { $nextUrl += $page.NextLink.Substring($queryStart) }
                 if ($item.Page -ge 100 -or -not $visited.Add($nextUrl)) { throw 'Intune primary-user pagination did not complete safely.' }
-                $pending.Enqueue([pscustomobject]@{ DeviceId=$item.DeviceId; Url=$nextUrl; Page=$item.Page+1 })
+                $item.Url = $nextUrl
+                $item.Page++
+                $pending.Enqueue($item)
             }
         }
     }
@@ -666,7 +690,8 @@ function ConvertFrom-LapsPasswordBase64 {
     $bytes = $null
     $decoded = $null
     try {
-        $bytes = [Convert]::FromBase64String($PasswordBase64)
+        try { $bytes = [Convert]::FromBase64String($PasswordBase64) }
+        catch [FormatException] { throw 'The LAPS password payload could not be decoded safely.' }
 
         if ($bytes.Length -eq 0) {
             throw 'The LAPS password payload is empty.'
@@ -679,17 +704,7 @@ function ConvertFrom-LapsPasswordBase64 {
         $isSafePasswordText = {
             param([AllowNull()][string]$Value)
 
-            if ([string]::IsNullOrEmpty($Value)) {
-                return $false
-            }
-
-            foreach ($character in $Value.ToCharArray()) {
-                if ([char]::IsControl($character)) {
-                    return $false
-                }
-            }
-
-            return $true
+            return -not [string]::IsNullOrEmpty($Value) -and -not [regex]::IsMatch($Value, '\p{Cc}')
         }
 
         try {
@@ -798,20 +813,22 @@ function Get-DeviceCodeFromMessage {
         [object]$Message
     )
 
-    $text = [string]$Message
-    if ([string]::IsNullOrWhiteSpace($text)) {
+    if ($Message -is [Management.Automation.InformationRecord]) {
+        $Message = $Message.MessageData
+        if ($Message -is [Management.Automation.HostInformationMessage]) { $Message = $Message.Message }
+    }
+    if ($Message -isnot [string]) {
         return $null
     }
 
-    $match = [regex]::Match($text, '(?i)enter\s+the\s+code\s+([A-Z0-9]{8,12})\s+to\s+authenticate')
+    $match = [regex]::Match($Message, '(?i)enter\s+the\s+code\s+([A-Z0-9]{8,12})\s+to\s+authenticate')
     if (-not $match.Success) {
         return $null
     }
 
-    $urlMatch = [regex]::Match($text, 'https://[^\s]+')
     return [pscustomobject]@{
         UserCode        = $match.Groups[1].Value.ToUpperInvariant()
-        VerificationUrl = if ($urlMatch.Success) { $urlMatch.Value.TrimEnd('.', ',') } else { 'https://login.microsoft.com/device' }
+        VerificationUrl = 'https://login.microsoft.com/device'
     }
 }
 
@@ -892,8 +909,8 @@ function Get-GraphFailureCategory {
     $combined = "$ErrorCode $Message"
     # OAuth's token endpoint uses HTTP 400 for explicit reauthentication errors.
     # Do not confuse a Graph bad-request response or generic token wording with it.
-    if ($StatusCode -eq 400 -and $combined -match '(?i)\binvalid_grant\b|\binteraction_required\b|\blogin_required\b|MsalUiRequiredException|AADSTS(50058|50076|50079|50173|70043|700082)\b') { return 'Authentication' }
-    if ($StatusCode -eq 400 -and $combined -match '(?i)\bconsent_required\b|\bAADSTS65001\b') { return 'Consent' }
+    if (($StatusCode -eq 400 -or $null -eq $StatusCode) -and ($ErrorCode -eq 'Consent' -or $combined -match '(?i)\bconsent_required\b|\bAADSTS65001\b')) { return 'Consent' }
+    if ($StatusCode -eq 400 -and ($ErrorCode -eq 'Authentication' -or $combined -match '(?i)\binvalid_grant\b|\binteraction_required\b|\blogin_required\b|MsalUiRequiredException|AADSTS(50058|50076|50079|50173|70043|700082)\b')) { return 'Authentication' }
     # An actual HTTP response otherwise outranks incidental words in an SDK exception.
     switch ($StatusCode) {
         401 { return 'Authentication' }
@@ -907,7 +924,9 @@ function Get-GraphFailureCategory {
     if ($StatusCode -ge 500 -and $StatusCode -le 599) { return 'Service' }
     if ($StatusCode -ge 100 -and $StatusCode -le 599) { return 'Unknown' }
 
-    if ($ErrorCode -in @('WrongAccount','WrongTenant','MissingScopes','NotDelegated','NoContext')) { return 'Authentication' }
+    if ($ErrorCode -in @('Authentication','Permission','Connectivity','Timeout','Service','NotFound','Throttled','Consent')) { return $ErrorCode }
+    if ($ErrorCode -eq 'MissingScopes') { return 'Permission' }
+    if ($ErrorCode -in @('WrongAccount','WrongTenant','NotDelegated','NoContext')) { return 'Authentication' }
     # Token acquisition also needs a network. Transport failures are not proof
     # that an administrator's sign-in has expired.
     if ($combined -match '(?i)timed?\s*out|timeout|taskcanceled|operationcanceled') { return 'Timeout' }
@@ -940,8 +959,16 @@ function ConvertTo-GraphOperationError {
         }
         $exception = $exception.InnerException
     }
-    # Details stay in memory only. UI text is always chosen from fixed messages.
-    return [pscustomobject]@{ Kind='Error'; ErrorCode=$errorCode; Message=($messages -join ' '); StatusCode=$statusCode; Stage=$Stage }
+    # SDK messages and PowerShell error IDs can contain response data. Only a
+    # known classification crosses from the worker to the UI.
+    $details = $messages -join ' '
+    $publicCode = Get-GraphFailureCategory -ErrorCode $errorCode -Message $details -StatusCode $statusCode
+    if ($publicCode -eq 'Unknown') {
+        if ($details -match 'LAPS credential for a different device') { $publicCode = 'LapsDeviceMismatch' }
+        elseif ($details -match 'LAPS password payload|decoded safely') { $publicCode = 'PasswordDecodeFailed' }
+        elseif ($details -match '48-digit BitLocker|different BitLocker recovery-key|BitLocker key for a different device') { $publicCode = 'RecoveryKeyValidationFailed' }
+    }
+    return [pscustomobject]@{ Kind='Error'; ErrorCode=$publicCode; Message=''; StatusCode=$statusCode; Stage=$Stage }
 }
 
 function Get-FriendlyLapsErrorMessage {
@@ -949,13 +976,16 @@ function Get-FriendlyLapsErrorMessage {
     param(
         [AllowNull()][string]$ErrorCode,
         [AllowNull()][string]$Message,
-        [AllowNull()][Nullable[int]]$StatusCode
+        [AllowNull()][Nullable[int]]$StatusCode,
+        [string]$Operation
     )
 
     if ($ErrorCode -eq 'WorkerStartFailed') {
         return 'The local background worker could not start. Retry the action; if it happens again, close and reopen Workbench.'
     }
     switch ($ErrorCode) {
+        'GraphModuleUnavailable' { return 'Workbench could not load Microsoft.Graph.Authentication. Check the installed module version, then select Refresh.' }
+        'LapsDeviceMismatch' { return 'Microsoft Graph returned a LAPS credential for a different computer. Refresh the device inventory and retry.' }
         'WrongAccount' { return 'Microsoft sign-in used a different account. Reconnect using the configured administrator account.' }
         'WrongTenant' { return 'Microsoft sign-in used a different tenant. Reconnect to the configured tenant.' }
         'MissingScopes' { return 'Microsoft sign-in is missing required Graph permissions. Check administrator consent, then reconnect.' }
@@ -965,8 +995,14 @@ function Get-FriendlyLapsErrorMessage {
         'Connectivity' { return 'Cannot reach Microsoft services. Check your network or VPN connection, then select Refresh to retry. Your sign-in could not be verified.' }
         'Timeout' { return 'The Microsoft request timed out. Check your network or VPN connection, then select Refresh to retry. Your sign-in could not be verified.' }
         'Authentication' { return 'Microsoft requires you to sign in again. Select Sign in, then retry your action.' }
-        'Permission' { return 'Access was denied. Check the configured Graph recovery permissions and use an eligible Entra role such as Cloud Device Administrator or Intune Administrator.' }
-        'NotFound' { return 'No current recovery secret was found for the selected record. Refresh the device inventory and retry.' }
+        'Permission' {
+            if ($Operation -in @('Authenticate','Inventory')) { return 'Access was denied. Check the configured Graph inventory permissions and the administrator account access.' }
+            return 'Access was denied. Check the configured Graph recovery permissions and use an eligible Entra role such as Cloud Device Administrator or Intune Administrator.'
+        }
+        'NotFound' {
+            if ($Operation -in @('Authenticate','Inventory')) { return 'Microsoft Graph could not find the requested inventory resource. Select Refresh to retry.' }
+            return 'No current recovery secret was found for the selected record. Refresh the device inventory and retry.'
+        }
         'Throttled' { return 'Microsoft Graph is temporarily throttling requests. Wait a moment and retry.' }
         'Service' { return 'Microsoft Graph is temporarily unavailable. Wait a moment and retry.' }
         'Consent' { return "Administrator consent is required for this tool's Microsoft Graph permissions." }
@@ -991,6 +1027,9 @@ Export-ModuleMember -Function @(
     'Get-GraphErrorStatusCode'
     'Get-GraphFailureCategory'
     'ConvertTo-GraphOperationError'
+    'Read-GraphCollectionPage'
+    'Get-CurrentManagedDeviceMap'
+    'Get-WorkbenchTimeoutSeconds'
     'Get-IntunePrimaryUserMap'
     'Get-SecretVerificationDecision'
     'Merge-IntuneLapsDeviceData'

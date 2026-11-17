@@ -50,6 +50,18 @@ function New-KeyResponseFixture {
     $result = @(& $lapsOperation $deviceIdFixture $modulePath)
     Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'CredentialResult' -and $result[0].Password -eq $plainPassword) -Name 'Actual LAPS operation decodes only the selected device response'
     Assert-True -Condition (@($script:GraphResponseFixture.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'LAPS success releases encoded values from every returned credential'
+    $record = New-LapsResponseFixture
+    $record.credentials = @($record.credentials[0])
+    $record.credentials[0].PSObject.Properties.Remove('backupDateTime')
+    $script:GraphResponseFixture = [pscustomobject]@{value=@($record)}
+    $result = @(& $lapsOperation $deviceIdFixture $modulePath)
+    Assert-True -Condition ($result[0].Kind -eq 'CredentialResult' -and $result[0].Password -eq $plainPassword -and
+        $null -eq $record.credentials[0].passwordBase64) -Name 'One wrapped response can omit an optional backup time and still releases encoded data'
+    $records = @((New-LapsResponseFixture), (New-LapsResponseFixture -Id $differentIdFixture))
+    $script:GraphResponseFixture = [pscustomobject]@{value=$records}
+    $result = @(& $lapsOperation $deviceIdFixture $modulePath)
+    Assert-True -Condition ($result[0].ErrorCode -eq 'LapsDeviceMismatch' -and
+        @($records.credentials | Where-Object passwordBase64).Count -eq 0) -Name 'Ambiguous LAPS responses are discarded and every returned record is scrubbed'
     foreach ($badId in @($differentIdFixture, '', 'not-a-guid')) {
         $script:GraphResponseFixture = New-LapsResponseFixture -Id $badId
         $result = @(& $lapsOperation $deviceIdFixture $modulePath)
@@ -63,7 +75,8 @@ function New-KeyResponseFixture {
     $result = @(& $lapsOperation 'not-a-guid' $modulePath)
     Assert-True -Condition ($result[0].Kind -eq 'Error' -and $script:FixtureRequestCount -eq $before) -Name 'Invalid LAPS request makes no Graph call'
 
-    $script:GraphResponseFixture = New-KeyResponseFixture
+    $script:GraphResponseFixture = New-KeyResponseFixture -DeviceId ('{' + $deviceIdFixture + '}')
+    $script:GraphResponseFixture.PSObject.Properties.Remove('createdDateTime')
     $result = @(& $keyOperation $deviceIdFixture $keyIdFixture $modulePath)
     Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq 'BitLockerKeyResult') -Name 'Actual BitLocker operation accepts a matching device and key ID'
     Assert-True -Condition ($null -eq $script:GraphResponseFixture.key) -Name 'BitLocker success releases the response secret field'
@@ -131,12 +144,13 @@ Assert-True -Condition $ownerRejected -Name 'Clipboard rejects missing owner bef
 $nativeShims = @{
     OpenClipboard = 'private static bool OpenClipboard(IntPtr hWndNewOwner) { OpenAttempts++; if (Busy) return false; OpenWindow = hWndNewOwner; if (ReplaceOnOpen) { ReplaceClipboard(); ReplaceOnOpen = false; } return true; }'
     CloseClipboard = 'private static bool CloseClipboard() { if (SynthesizeOnClose) Sequence += 3; if (ReplaceOnClose) { ReplaceClipboard(); ReplaceOnClose = false; } return true; }'
-    EmptyClipboard = 'private static bool EmptyClipboard() { DropMarker(); Owner = OpenWindow; Sequence++; EmptyCount++; return true; }'
+    EmptyClipboard = 'private static bool EmptyClipboard() { if (FailEmpty) return false; DropMarker(); Owner = OpenWindow; Sequence++; EmptyCount++; return true; }'
     SetClipboardData = 'private static IntPtr SetClipboardData(uint uFormat, IntPtr hMem) { Formats.Add(uFormat); if (uFormat == CfUnicodeText) LastText = Marshal.PtrToStringUni(hMem); Sequence++; if (uFormat == 100u) { MarkerHandle = hMem; } else { Allocations.Remove(hMem); Marshal.FreeHGlobal(hMem); } return new IntPtr(1); }'
     RegisterClipboardFormat = 'private static uint RegisterClipboardFormat(string lpszFormat) { return lpszFormat == ExcludeFormatName ? 100u : lpszFormat == HistoryFormatName ? 101u : 102u; }'
     GetClipboardSequenceNumber = 'private static uint GetClipboardSequenceNumber() { return Sequence; }'
     GetClipboardOwner = 'private static IntPtr GetClipboardOwner() { return Owner; }'
-    GetClipboardData = 'private static IntPtr GetClipboardData(uint format) { return format == 100u ? MarkerHandle : IntPtr.Zero; }'
+    GetClipboardData = 'private static IntPtr GetClipboardData(uint format) { return format == 100u && !FailRead ? MarkerHandle : IntPtr.Zero; }'
+    IsClipboardFormatAvailable = 'private static bool IsClipboardFormatAvailable(uint format) { return format == 100u && MarkerHandle != IntPtr.Zero; }'
     IsWindow = 'private static bool IsWindow(IntPtr hWnd) { return hWnd != IntPtr.Zero; }'
     GlobalAlloc = 'private static IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes) { IntPtr handle = Marshal.AllocHGlobal((int)dwBytes.ToUInt64()); Allocations[handle] = dwBytes.ToUInt64(); return handle; }'
     GlobalLock = 'private static IntPtr GlobalLock(IntPtr hMem) { return hMem; }'
@@ -155,6 +169,8 @@ $clipboardAlgorithm = [regex]::Replace($clipboardAlgorithm, '(?s)\[DllImport\([^
 $clipboardAlgorithm = $clipboardAlgorithm.Replace('private const uint CfUnicodeText', @'
 public static string LastText;
         public static bool Busy;
+        public static bool FailEmpty;
+        public static bool FailRead;
         public static int OpenAttempts;
         public static bool ReplaceOnClose;
         public static bool ReplaceOnOpen;
@@ -176,7 +192,7 @@ public static string LastText;
         }
         public static void CorruptMarker() { Marshal.WriteByte(MarkerHandle, (byte)(Marshal.ReadByte(MarkerHandle) ^ 1)); Sequence++; }
         private const uint CfUnicodeText
-'@).Replace('Thread.Sleep(20 + (attempt * 15));', '/* deterministic contention: no real delay */')
+'@).Replace('Thread.Sleep(20 + (attempt * 15));', '{}')
 Add-Type -TypeDefinition $clipboardAlgorithm
 [M365Workbench.TestDoubles.SecureClipboard]::ReplaceOnClose = $true
 [M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic', [IntPtr]1)
@@ -215,6 +231,20 @@ try { $null=[M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged($false
 Assert-True -Condition ($busyRejected -and [M365Workbench.TestDoubles.SecureClipboard]::OpenAttempts -eq $attemptsBefore + 1) -Name 'Timer-driven clipboard cleanup makes one attempt without a blocking retry loop'
 [M365Workbench.TestDoubles.SecureClipboard]::Busy = $false
 Assert-True -Condition ([M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged($false)) -Name 'Nonblocking clipboard cleanup retains ownership until its successful retry'
+
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('previous synthetic item',[IntPtr]1)
+[M365Workbench.TestDoubles.SecureClipboard]::FailEmpty = $true
+$writeFailed = $false
+try { [M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('new synthetic item',[IntPtr]1) } catch { $writeFailed = $true }
+finally { [M365Workbench.TestDoubles.SecureClipboard]::FailEmpty = $false }
+Assert-True -Condition ($writeFailed -and [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged($false)) -Name 'A failed initial empty keeps ownership of the previous protected item'
+
+[M365Workbench.TestDoubles.SecureClipboard]::SetSensitiveText('synthetic item',[IntPtr]1)
+[M365Workbench.TestDoubles.SecureClipboard]::FailRead = $true
+$readFailed = $false
+try { $null = [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged($false) } catch { $readFailed = $true }
+finally { [M365Workbench.TestDoubles.SecureClipboard]::FailRead = $false }
+Assert-True -Condition ($readFailed -and [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged($false)) -Name 'A temporary marker read failure leaves the item eligible for cleanup'
 
 & {
     function Process-OperationOutput { }

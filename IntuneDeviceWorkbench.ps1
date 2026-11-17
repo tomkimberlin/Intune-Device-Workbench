@@ -94,6 +94,8 @@ if ($secretVerificationSeconds -lt 60 -or $secretVerificationSeconds -gt 3600) {
 }
 
 Import-Module $coreModulePath -Force
+$settings.ClipboardClearSeconds = Get-WorkbenchTimeoutSeconds $settings 'ClipboardClearSeconds' 45
+$settings.RevealSeconds = Get-WorkbenchTimeoutSeconds $settings 'RevealSeconds' 20
 
 if ($null -eq ('M365Workbench.Security.SecureClipboard' -as [type])) {
     Add-Type -Path $secureClipboardPath
@@ -115,1046 +117,8 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne [Threading.Apartme
     exit 1
 }
 
-$xaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Intune Device Workbench · 2026.11.11"
-        Width="1280" Height="780" MinWidth="1100" MinHeight="680"
-        WindowStartupLocation="CenterScreen"
-        Background="#F5F7FB"
-        FontFamily="Segoe UI"
-        TextOptions.TextFormattingMode="Display"
-        TextOptions.TextRenderingMode="ClearType"
-        UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
-  <Window.Resources>
-    <SolidColorBrush x:Key="PrimaryBrush" Color="#2563EB"/>
-    <SolidColorBrush x:Key="PrimaryHoverBrush" Color="#1D4ED8"/>
-    <SolidColorBrush x:Key="PrimaryPressedBrush" Color="#1E40AF"/>
-    <SolidColorBrush x:Key="PrimarySoftBrush" Color="#EFF6FF"/>
-    <SolidColorBrush x:Key="TextBrush" Color="#0F172A"/>
-    <SolidColorBrush x:Key="MutedBrush" Color="#64748B"/>
-    <SolidColorBrush x:Key="BorderBrush" Color="#D8E1EC"/>
-    <SolidColorBrush x:Key="SubtleBorderBrush" Color="#E8EDF4"/>
-    <SolidColorBrush x:Key="SuccessBrush" Color="#15803D"/>
-    <SolidColorBrush x:Key="SuccessSoftBrush" Color="#ECFDF3"/>
-    <SolidColorBrush x:Key="DangerBrush" Color="#B42318"/>
-    <SolidColorBrush x:Key="DangerSoftBrush" Color="#FEF3F2"/>
-
-    <Style x:Key="ButtonFocusVisual">
-      <Setter Property="Control.Template">
-        <Setter.Value>
-          <ControlTemplate>
-            <Border BorderBrush="#93C5FD" BorderThickness="2" CornerRadius="9" Margin="2"/>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="PrimaryButton" TargetType="Button">
-      <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="18,10"/>
-      <Setter Property="MinHeight" Value="40"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="{StaticResource PrimaryHoverBrush}"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="{StaticResource PrimaryPressedBrush}"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.45"/></Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="SecondaryButton" TargetType="Button">
-      <Setter Property="Background" Value="White"/>
-      <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Padding" Value="14,9"/>
-      <Setter Property="MinHeight" Value="40"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#F1F5F9"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#E2E8F0"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.42"/></Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="PortalLinkButton" TargetType="Button">
-      <Setter Property="Background" Value="White"/>
-      <Setter Property="Foreground" Value="#1D4ED8"/>
-      <Setter Property="BorderBrush" Value="#D8E4F4"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Padding" Value="10,7"/>
-      <Setter Property="MinHeight" Value="34"/>
-      <Setter Property="FontSize" Value="11"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#EFF6FF"/><Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#93C5FD"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#DBEAFE"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.42"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="IconButton" TargetType="Button">
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="#64748B"/>
-      <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#EEF2F7"/><Setter Property="Foreground" Value="#334155"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#E2E8F0"/></Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="FilterCheckBox" TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#475569"/>
-      <Setter Property="FontSize" Value="12.5"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="CheckBox">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <Border x:Name="CheckBoxBorder" Width="18" Height="18" CornerRadius="5" Background="White" BorderBrush="#CBD5E1" BorderThickness="1.2" Margin="0,0,8,0">
-                <Path x:Name="CheckMark" Data="M0,3.5 L3,6.5 L10,0" Width="10" Height="7" Stretch="Fill" Stroke="White" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-              </Border>
-              <ContentPresenter VerticalAlignment="Center"/>
-            </StackPanel>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#2563EB"/></Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#2563EB"/><Setter TargetName="CheckBoxBorder" Property="BorderThickness" Value="2"/></Trigger>
-              <Trigger Property="IsChecked" Value="True"><Setter TargetName="CheckBoxBorder" Property="Background" Value="#2563EB"/><Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#2563EB"/><Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="RecoveryKeyPickerItem" TargetType="{x:Type ComboBoxItem}">
-      <Setter Property="ToolTip" Value="{Binding Id}"/>
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="#172033"/>
-      <Setter Property="Padding" Value="10,6"/>
-      <Setter Property="Margin" Value="3,2"/>
-      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-      <Setter Property="VerticalContentAlignment" Value="Center"/>
-      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="{x:Type ComboBoxItem}">
-            <Border x:Name="RecoveryKeyItemSurface"
-                    Background="{TemplateBinding Background}"
-                    CornerRadius="6"
-                    Padding="{TemplateBinding Padding}"
-                    SnapsToDevicePixels="True">
-              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                SnapsToDevicePixels="True"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsHighlighted" Value="True">
-                <Setter TargetName="RecoveryKeyItemSurface" Property="Background" Value="#F1F6FF"/>
-              </Trigger>
-              <Trigger Property="IsSelected" Value="True">
-                <Setter TargetName="RecoveryKeyItemSurface" Property="Background" Value="#E8F1FF"/>
-              </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.48"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="RecoveryKeyPicker" TargetType="{x:Type ComboBox}">
-      <Setter Property="Background" Value="White"/>
-      <Setter Property="Foreground" Value="#172033"/>
-      <Setter Property="BorderBrush" Value="#D8E1EC"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Height" Value="44"/>
-      <Setter Property="FontSize" Value="11.5"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-      <Setter Property="ItemContainerStyle" Value="{StaticResource RecoveryKeyPickerItem}"/>
-      <Setter Property="ItemTemplate">
-        <Setter.Value>
-          <DataTemplate>
-            <Grid Margin="0,1">
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-              </Grid.RowDefinitions>
-              <TextBlock Text="{Binding VolumeDisplay}"
-                         Foreground="#172033"
-                         FontSize="11.5"
-                         FontWeight="SemiBold"
-                         TextTrimming="CharacterEllipsis"/>
-              <TextBlock Grid.Row="1"
-                         Foreground="#64748B"
-                         FontSize="10"
-                         Margin="0,2,0,0"
-                         TextTrimming="CharacterEllipsis">
-                <Run Text="Backed up "/><Run Text="{Binding CreatedDisplay}"/>
-              </TextBlock>
-            </Grid>
-          </DataTemplate>
-        </Setter.Value>
-      </Setter>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="{x:Type ComboBox}">
-            <Grid SnapsToDevicePixels="True">
-              <Border x:Name="RecoveryKeyPickerSurface"
-                      Background="{TemplateBinding Background}"
-                      BorderBrush="{TemplateBinding BorderBrush}"
-                      BorderThickness="{TemplateBinding BorderThickness}"
-                      CornerRadius="8">
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="38"/>
-                  </Grid.ColumnDefinitions>
-                  <ContentPresenter Margin="12,5,6,5"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Stretch"
-                                    Content="{TemplateBinding SelectionBoxItem}"
-                                    ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
-                                    ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
-                                    SnapsToDevicePixels="True"/>
-                  <Border Grid.Column="1" Background="Transparent">
-                    <Path x:Name="RecoveryKeyPickerChevron"
-                          Data="M 1 1 L 5 5 L 9 1"
-                          Width="10"
-                          Height="6"
-                          Stretch="Fill"
-                          Stroke="#64748B"
-                          StrokeThickness="1.5"
-                          StrokeStartLineCap="Round"
-                          StrokeEndLineCap="Round"
-                          StrokeLineJoin="Round"
-                          HorizontalAlignment="Center"
-                          VerticalAlignment="Center"/>
-                  </Border>
-                </Grid>
-              </Border>
-              <ToggleButton x:Name="RecoveryKeyPickerToggle"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Focusable="False"
-                            ClickMode="Press"
-                            Cursor="{TemplateBinding Cursor}"
-                            IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
-                <ToggleButton.Template>
-                  <ControlTemplate TargetType="{x:Type ToggleButton}">
-                    <Border Background="Transparent"/>
-                  </ControlTemplate>
-                </ToggleButton.Template>
-              </ToggleButton>
-              <Popup x:Name="PART_Popup"
-                     AllowsTransparency="True"
-                     Focusable="False"
-                     IsOpen="{TemplateBinding IsDropDownOpen}"
-                     Placement="Bottom"
-                     PopupAnimation="Fade">
-                <Border x:Name="RecoveryKeyDropDownSurface"
-                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
-                        Background="White"
-                        BorderBrush="#D8E1EC"
-                        BorderThickness="1"
-                        CornerRadius="9"
-                        Margin="0,5,0,8"
-                        Padding="2">
-                  <Border.Effect>
-                    <DropShadowEffect Color="#172033" BlurRadius="18" ShadowDepth="5" Opacity="0.18"/>
-                  </Border.Effect>
-                  <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}"
-                                CanContentScroll="True"
-                                HorizontalScrollBarVisibility="Disabled"
-                                VerticalScrollBarVisibility="Auto"
-                                SnapsToDevicePixels="True">
-                    <ScrollViewer.Resources>
-                      <Style TargetType="{x:Type ScrollBar}">
-                        <Setter Property="Width" Value="8"/>
-                        <Setter Property="Margin" Value="3,4,1,4"/>
-                        <Setter Property="Background" Value="Transparent"/>
-                        <Setter Property="Focusable" Value="False"/>
-                        <Setter Property="Template">
-                          <Setter.Value>
-                            <ControlTemplate TargetType="{x:Type ScrollBar}">
-                              <Grid Background="Transparent">
-                                <Track x:Name="PART_Track"
-                                       Orientation="Vertical"
-                                       IsDirectionReversed="True"
-                                       Minimum="{TemplateBinding Minimum}"
-                                       Maximum="{TemplateBinding Maximum}"
-                                       Value="{TemplateBinding Value}"
-                                       ViewportSize="{TemplateBinding ViewportSize}">
-                                  <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/>
-                                  </Track.DecreaseRepeatButton>
-                                  <Track.Thumb>
-                                    <Thumb x:Name="RecoveryKeyScrollThumb" Width="4" MinHeight="26" HorizontalAlignment="Center" Background="#CBD5E1">
-                                      <Thumb.Template>
-                                        <ControlTemplate TargetType="{x:Type Thumb}">
-                                          <Border x:Name="RecoveryKeyScrollThumbSurface" Background="{TemplateBinding Background}" CornerRadius="2"/>
-                                          <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="RecoveryKeyScrollThumbSurface" Property="Background" Value="#94A3B8"/></Trigger>
-                                            <Trigger Property="IsDragging" Value="True"><Setter TargetName="RecoveryKeyScrollThumbSurface" Property="Background" Value="#64748B"/></Trigger>
-                                          </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                      </Thumb.Template>
-                                    </Thumb>
-                                  </Track.Thumb>
-                                  <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/>
-                                  </Track.IncreaseRepeatButton>
-                                </Track>
-                              </Grid>
-                            </ControlTemplate>
-                          </Setter.Value>
-                        </Setter>
-                      </Style>
-                    </ScrollViewer.Resources>
-                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"
-                                    SnapsToDevicePixels="True"/>
-                  </ScrollViewer>
-                </Border>
-              </Popup>
-            </Grid>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="BorderBrush" Value="#AFC2DB"/>
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="Background" Value="#FBFDFF"/>
-              </Trigger>
-              <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="BorderBrush" Value="#2563EB"/>
-              </Trigger>
-              <Trigger Property="IsDropDownOpen" Value="True">
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="BorderBrush" Value="#2563EB"/>
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="Background" Value="#F8FBFF"/>
-                <Setter TargetName="RecoveryKeyPickerChevron" Property="RenderTransform">
-                  <Setter.Value><RotateTransform Angle="180" CenterX="5" CenterY="3"/></Setter.Value>
-                </Setter>
-              </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Cursor" Value="Arrow"/>
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="Background" Value="#F8FAFC"/>
-                <Setter TargetName="RecoveryKeyPickerSurface" Property="BorderBrush" Value="#E2E8F0"/>
-                <Setter TargetName="RecoveryKeyPickerChevron" Property="Opacity" Value="0.35"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="LabelText" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
-      <Setter Property="FontSize" Value="12"/>
-      <Setter Property="Margin" Value="0,11,0,3"/>
-    </Style>
-
-    <Style x:Key="ValueText" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-      <Setter Property="FontSize" Value="14"/>
-      <Setter Property="TextWrapping" Value="Wrap"/>
-    </Style>
-
-    <Style TargetType="DataGridColumnHeader">
-      <Setter Property="Background" Value="#F8FAFC"/>
-      <Setter Property="Foreground" Value="#475569"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="FontSize" Value="12"/>
-      <Setter Property="Padding" Value="12,11"/>
-      <Setter Property="BorderBrush" Value="#D8E1EC"/>
-      <Setter Property="BorderThickness" Value="0,0,1,1"/>
-      <Setter Property="SeparatorBrush" Value="#D8E1EC"/>
-      <Setter Property="SeparatorVisibility" Value="Visible"/>
-      <Style.Triggers>
-        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#F1F5F9"/></Trigger>
-      </Style.Triggers>
-    </Style>
-
-    <Style TargetType="DataGridCell">
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-      <Setter Property="VerticalContentAlignment" Value="Center"/>
-      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-      <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="DataGridCell">
-            <Border x:Name="DeviceCellFrame"
-                    Background="{TemplateBinding Background}"
-                    BorderBrush="#D8E1EC"
-                    BorderThickness="0,0,1,0"
-                    SnapsToDevicePixels="True">
-              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-            </Border>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-      <Style.Triggers>
-        <Trigger Property="IsSelected" Value="True">
-          <Setter Property="Background" Value="#E8F1FF"/>
-          <Setter Property="Foreground" Value="#163A72"/>
-        </Trigger>
-      </Style.Triggers>
-    </Style>
-
-    <Style TargetType="DataGridRow">
-      <Setter Property="Background" Value="White"/>
-      <Setter Property="BorderBrush" Value="#E9EEF5"/>
-      <Setter Property="BorderThickness" Value="0,0,0,1"/>
-      <Setter Property="MinHeight" Value="46"/>
-      <Style.Triggers>
-        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#F6F9FE"/></Trigger>
-        <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#E8F1FF"/></Trigger>
-      </Style.Triggers>
-    </Style>
-
-    <Style TargetType="ToolTip">
-      <Setter Property="Background" Value="#172033"/>
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="9,6"/>
-      <Setter Property="FontSize" Value="11"/>
-    </Style>
-  </Window.Resources>
-
-  <Grid x:Name="RootGrid">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="88"/>
-      <RowDefinition Height="78"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="40"/>
-    </Grid.RowDefinitions>
-
-    <Border Grid.Row="0" Background="White" BorderBrush="#E4E9F0" BorderThickness="0,0,0,1">
-      <Grid Margin="24,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="13"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <Border Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
-          <Border.Background>
-            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-              <GradientStop Color="#2563EB" Offset="0"/>
-              <GradientStop Color="#4338CA" Offset="1"/>
-            </LinearGradientBrush>
-          </Border.Background>
-          <Viewbox Width="46" Height="46" HorizontalAlignment="Center" VerticalAlignment="Center">
-            <Grid Width="56" Height="56">
-              <Path Data="M15,24 L19,41 L28,31 L37,41 L41,24" Stroke="White" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"/>
-              <Border Width="36" Height="6" Background="White" CornerRadius="3" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,20,0,0"/>
-              <Border Width="10" Height="9" Background="#7DD3FC" CornerRadius="2.25" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,14,0"/>
-            </Grid>
-          </Viewbox>
-        </Border>
-        <StackPanel Grid.Column="2" VerticalAlignment="Center">
-          <TextBlock Text="Intune Device Workbench" FontSize="23" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
-          <TextBlock Text="Devices, LAPS, and BitLocker" FontSize="12.5" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
-        </StackPanel>
-        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-          <Border Background="#F1F5F9" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="18" Padding="12,7" Margin="0,0,10,0">
-            <Grid VerticalAlignment="Center">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <Ellipse x:Name="AuthDot" Width="8" Height="8" Fill="#94A3B8" Margin="0,0,7,0" VerticalAlignment="Center"/>
-              <TextBlock x:Name="AuthStatusText" Grid.Column="1" Text="Checking sign-in..." FontSize="12" FontWeight="SemiBold" Foreground="#475569" VerticalAlignment="Center" MaxWidth="320" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-            </Grid>
-          </Border>
-          <Button x:Name="SignInButton" Content="Sign in" Style="{StaticResource SecondaryButton}" MinWidth="92"/>
-        </StackPanel>
-      </Grid>
-    </Border>
-
-    <Grid Grid.Row="1" Margin="24,14,24,14">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="455"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Border Grid.Column="0" Height="50" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
-        <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBlock Grid.Column="0" Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#64748B" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-          <TextBox x:Name="SearchBox" Grid.Column="1" BorderThickness="0" Background="Transparent" FontSize="14" Foreground="{StaticResource TextBrush}" VerticalContentAlignment="Center" Padding="2,10,0,10" AutomationProperties.Name="Search computers"/>
-          <TextBlock x:Name="SearchHint" Grid.Column="1" Text="Search computer, user, serial, or model" Foreground="#94A3B8" FontSize="14" IsHitTestVisible="False" VerticalAlignment="Center" Margin="2,0,0,0"/>
-          <Border Grid.Column="2" Background="#F1F5F9" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="5" Padding="6,3" Margin="7,0,10,0" VerticalAlignment="Center" HorizontalAlignment="Right" IsHitTestVisible="False">
-            <TextBlock Text="Ctrl + F" Foreground="#64748B" FontSize="10" FontWeight="SemiBold"/>
-          </Border>
-          <Button x:Name="ClearSearchButton" Grid.Column="3" Width="38" Content="×" Style="{StaticResource IconButton}" FontSize="18" Padding="8" Visibility="Collapsed" ToolTip="Clear search" AutomationProperties.Name="Clear search"/>
-        </Grid>
-      </Border>
-      <Border x:Name="EntraOnlyFilterContainer" Grid.Column="2" Height="50" MinWidth="146" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="12,0" Margin="14,0,0,0" Visibility="Collapsed">
-        <CheckBox x:Name="EntraOnlyCheckBox" Style="{StaticResource FilterCheckBox}" VerticalAlignment="Center" ToolTip="Show devices found in Microsoft Entra with no matching Intune managed-device record" AutomationProperties.Name="Show Entra-only devices">
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="Entra only" Foreground="#9A3412" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <Border Background="#FFEDD5" CornerRadius="9" MinWidth="20" Height="20" Margin="7,0,0,0" Padding="5,0">
-              <TextBlock x:Name="EntraOnlyFilterCount" Text="0" Foreground="#9A3412" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-          </StackPanel>
-        </CheckBox>
-      </Border>
-      <Border Grid.Column="3" Height="50" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="12,0" Margin="10,0">
-        <CheckBox x:Name="OnlyReadyCheckBox" Content="Recovery-ready only" Style="{StaticResource FilterCheckBox}" VerticalAlignment="Center" IsChecked="True" ToolTip="Show devices with LAPS or BitLocker recovery material"/>
-      </Border>
-      <Button x:Name="RefreshButton" Grid.Column="4" Style="{StaticResource SecondaryButton}" MinWidth="108" Height="50" ToolTip="Refresh devices (F5)">
-        <StackPanel Orientation="Horizontal">
-          <TextBlock x:Name="RefreshIcon" Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
-          <TextBlock x:Name="RefreshButtonText" Text="Refresh" VerticalAlignment="Center"/>
-        </StackPanel>
-      </Button>
-    </Grid>
-
-    <Grid Grid.Row="2" Margin="24,0,24,14">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="330"/></Grid.ColumnDefinitions>
-
-      <Grid Grid.Column="0" Margin="0,0,14,0">
-        <Border x:Name="DeviceTableSurface" Background="White" CornerRadius="10" ClipToBounds="True">
-          <Grid>
-          <DataGrid x:Name="DeviceGrid"
-                    AutoGenerateColumns="False"
-                    IsReadOnly="True"
-                    SelectionMode="Single"
-                    SelectionUnit="FullRow"
-                    HeadersVisibility="Column"
-                    GridLinesVisibility="None"
-                    BorderThickness="0"
-                    Background="White"
-                    AlternationCount="2"
-                    AlternatingRowBackground="#FBFCFE"
-                    RowHeaderWidth="0"
-                    ColumnHeaderHeight="42"
-                    RowHeight="48"
-                    CanUserAddRows="False"
-                    CanUserDeleteRows="False"
-                    CanUserReorderColumns="False"
-                    ScrollViewer.CanContentScroll="True"
-                    EnableRowVirtualization="True"
-                    VirtualizingPanel.IsVirtualizing="True"
-                    VirtualizingPanel.VirtualizationMode="Recycling"
-                    VirtualizingPanel.ScrollUnit="Pixel">
-            <DataGrid.Resources>
-              <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#E8F1FF"/>
-              <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#163A72"/>
-              <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#EEF4FD"/>
-              <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#163A72"/>
-              <SolidColorBrush x:Key="DeviceListScrollThumbBrush" Color="#CBD5E1"/>
-              <Style TargetType="ScrollBar">
-                <Setter Property="Width" Value="12"/>
-                <Setter Property="MinWidth" Value="12"/>
-                <Setter Property="Background" Value="Transparent"/>
-                <Setter Property="Margin" Value="1,4,3,7"/>
-                <Setter Property="Focusable" Value="False"/>
-                <Setter Property="Template">
-                  <Setter.Value>
-                    <ControlTemplate TargetType="ScrollBar">
-                      <Grid Background="Transparent">
-                        <Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}">
-                          <Track.DecreaseRepeatButton>
-                            <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/>
-                          </Track.DecreaseRepeatButton>
-                          <Track.Thumb>
-                            <Thumb x:Name="DeviceListVerticalThumb" Width="6" MinHeight="32" HorizontalAlignment="Center" Background="{StaticResource DeviceListScrollThumbBrush}">
-                              <Thumb.Template>
-                                <ControlTemplate TargetType="Thumb">
-                                  <Border x:Name="ThumbBorder" Background="{TemplateBinding Background}" CornerRadius="3"/>
-                                  <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ThumbBorder" Property="Background" Value="#94A3B8"/></Trigger>
-                                    <Trigger Property="IsDragging" Value="True"><Setter TargetName="ThumbBorder" Property="Background" Value="#64748B"/></Trigger>
-                                  </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                              </Thumb.Template>
-                            </Thumb>
-                          </Track.Thumb>
-                          <Track.IncreaseRepeatButton>
-                            <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/>
-                          </Track.IncreaseRepeatButton>
-                        </Track>
-                      </Grid>
-                    </ControlTemplate>
-                  </Setter.Value>
-                </Setter>
-                <Style.Triggers>
-                  <Trigger Property="Orientation" Value="Horizontal">
-                    <Setter Property="Width" Value="Auto"/>
-                    <Setter Property="MinWidth" Value="0"/>
-                    <Setter Property="Height" Value="12"/>
-                    <Setter Property="MinHeight" Value="12"/>
-                    <Setter Property="Margin" Value="4,1,7,3"/>
-                    <Setter Property="Template">
-                      <Setter.Value>
-                        <ControlTemplate TargetType="ScrollBar">
-                          <Grid Background="Transparent">
-                            <Track x:Name="PART_Track" Orientation="Horizontal" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}">
-                              <Track.DecreaseRepeatButton>
-                                <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/>
-                              </Track.DecreaseRepeatButton>
-                              <Track.Thumb>
-                                <Thumb x:Name="DeviceListHorizontalThumb" Height="6" MinWidth="32" VerticalAlignment="Center" Background="{StaticResource DeviceListScrollThumbBrush}">
-                                  <Thumb.Template>
-                                    <ControlTemplate TargetType="Thumb">
-                                      <Border x:Name="ThumbBorder" Background="{TemplateBinding Background}" CornerRadius="3"/>
-                                      <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ThumbBorder" Property="Background" Value="#94A3B8"/></Trigger>
-                                        <Trigger Property="IsDragging" Value="True"><Setter TargetName="ThumbBorder" Property="Background" Value="#64748B"/></Trigger>
-                                      </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                  </Thumb.Template>
-                                </Thumb>
-                              </Track.Thumb>
-                              <Track.IncreaseRepeatButton>
-                                <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/>
-                              </Track.IncreaseRepeatButton>
-                            </Track>
-                          </Grid>
-                        </ControlTemplate>
-                      </Setter.Value>
-                    </Setter>
-                  </Trigger>
-                </Style.Triggers>
-              </Style>
-            </DataGrid.Resources>
-            <DataGrid.Columns>
-              <DataGridTemplateColumn Header="Computer" SortMemberPath="DeviceName" Width="135">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding DeviceName}" FontWeight="SemiBold" Foreground="#183153" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding DeviceName}" Margin="12,0"/>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="Primary user" SortMemberPath="PrimaryUser" Width="155">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <TextBlock x:Name="PrimaryUserCell" Text="{Binding PrimaryUser}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding UserPrincipalName}" Margin="12,0"/>
-                    <DataTemplate.Triggers>
-                      <DataTrigger Binding="{Binding PrimaryUser}" Value="Unassigned"><Setter TargetName="PrimaryUserCell" Property="Foreground" Value="#94A3B8"/><Setter TargetName="PrimaryUserCell" Property="FontStyle" Value="Italic"/></DataTrigger>
-                    </DataTemplate.Triggers>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="Model" SortMemberPath="Model" Width="125">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate><TextBlock Text="{Binding Model}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Model}" Margin="12,0"/></DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="Recovery" SortMemberPath="RecoveryAvailable" Width="128">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
-                      <Border x:Name="LapsPill" Background="{StaticResource SuccessSoftBrush}" CornerRadius="10" Padding="7,3" HorizontalAlignment="Left" ToolTip="Windows LAPS password available">
-                        <TextBlock x:Name="LapsPillText" Text="LAPS" Foreground="{StaticResource SuccessBrush}" FontSize="10.5" FontWeight="SemiBold"/>
-                      </Border>
-                      <Border x:Name="BitLockerPill" Background="{StaticResource PrimarySoftBrush}" CornerRadius="10" Padding="7,3" HorizontalAlignment="Left" Margin="5,0,0,0" ToolTip="{Binding BitLockerStatus}">
-                        <TextBlock x:Name="BitLockerPillText" Text="{Binding BitLockerStatus}" Foreground="#1D4ED8" FontSize="10.5" FontWeight="SemiBold"/>
-                      </Border>
-                    </StackPanel>
-                    <DataTemplate.Triggers>
-                      <DataTrigger Binding="{Binding LapsAvailable}" Value="False">
-                        <Setter TargetName="LapsPill" Property="Background" Value="#F1F5F9"/>
-                        <Setter TargetName="LapsPillText" Property="Foreground" Value="#94A3B8"/>
-                        <Setter TargetName="LapsPill" Property="ToolTip" Value="No Entra-backed LAPS password"/>
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding BitLockerAvailable}" Value="False">
-                        <Setter TargetName="BitLockerPill" Property="Background" Value="#F1F5F9"/>
-                        <Setter TargetName="BitLockerPillText" Property="Foreground" Value="#94A3B8"/>
-                      </DataTrigger>
-                    </DataTemplate.Triggers>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="LAPS changed" SortMemberPath="LastBackupDateTime" Width="145">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate><TextBlock Text="{Binding LastBackupDisplay}" VerticalAlignment="Center" Margin="12,0"/></DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="Last Intune sync" SortMemberPath="LastSyncDateTime" Width="*" MinWidth="155">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
-                      <Ellipse x:Name="StaleDot" Width="6" Height="6" Fill="#D97706" Margin="0,0,6,0" Visibility="Collapsed"/>
-                      <TextBlock x:Name="LastSyncCell" Text="{Binding LastSyncDisplay}" TextTrimming="CharacterEllipsis"/>
-                      <Border x:Name="EntraOnlyPill" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" CornerRadius="10" Padding="7,3" Visibility="Collapsed" ToolTip="{Binding ManagementStateDescription}">
-                        <StackPanel Orientation="Horizontal">
-                          <Ellipse Width="6" Height="6" Fill="#D97706" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                          <TextBlock Text="Entra only" Foreground="#9A3412" FontSize="10.5" FontWeight="SemiBold"/>
-                        </StackPanel>
-                      </Border>
-                    </StackPanel>
-                    <DataTemplate.Triggers>
-                      <DataTrigger Binding="{Binding IsStale}" Value="True">
-                        <Setter TargetName="StaleDot" Property="Visibility" Value="Visible"/>
-                        <Setter TargetName="LastSyncCell" Property="Foreground" Value="#B45309"/>
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding IsEntraOnly}" Value="True">
-                        <Setter TargetName="LastSyncCell" Property="Visibility" Value="Collapsed"/>
-                        <Setter TargetName="EntraOnlyPill" Property="Visibility" Value="Visible"/>
-                      </DataTrigger>
-                    </DataTemplate.Triggers>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-            </DataGrid.Columns>
-          </DataGrid>
-          <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-            <Border Background="#F1F5F9" CornerRadius="26" Width="52" Height="52" HorizontalAlignment="Center" Margin="0,0,0,13">
-              <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#64748B" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <TextBlock x:Name="EmptyStateTitle" Text="No matching computers" FontSize="17" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Center"/>
-            <TextBlock x:Name="EmptyStateDescription" Text="Try another search or include devices without recovery material." Foreground="#64748B" Margin="0,6,0,0"/>
-          </StackPanel>
-            <Border x:Name="LoadingOverlay" Background="#F8FFFFFF" Panel.ZIndex="10" Visibility="Collapsed">
-              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                <ProgressBar Width="150" Height="4" IsIndeterminate="True" Foreground="{StaticResource PrimaryBrush}"/>
-                <TextBlock x:Name="LoadingText" Text="Loading managed devices..." Foreground="#475569" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0"/>
-                <TextBlock Text="Checking Intune, Entra, LAPS, and BitLocker" Foreground="#94A3B8" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-              </StackPanel>
-            </Border>
-          </Grid>
-        </Border>
-        <Border x:Name="DeviceTableOutline" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" IsHitTestVisible="False" Panel.ZIndex="20"/>
-      </Grid>
-
-      <Border Grid.Column="1" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="18">
-        <Grid>
-          <StackPanel x:Name="NoSelectionPanel" VerticalAlignment="Center">
-            <Border Background="{StaticResource PrimarySoftBrush}" CornerRadius="31" Width="62" Height="62" HorizontalAlignment="Center">
-              <Viewbox Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Grid Width="24" Height="24">
-                  <Path Data="M12,2 L20,5 L20,11 C20,16.1 16.6,20.2 12,22 C7.4,20.2 4,16.1 4,11 L4,5 Z" Stroke="#2563EB" StrokeThickness="1.65" StrokeLineJoin="Round" Fill="Transparent"/>
-                  <Path Data="M9,11 L9,9.5 C9,7.7 10.3,6.4 12,6.4 C13.7,6.4 15,7.7 15,9.5 L15,11 M8,11 L16,11 L16,17 L8,17 Z" Stroke="#2563EB" StrokeThickness="1.5" StrokeLineJoin="Round" Fill="Transparent"/>
-                </Grid>
-              </Viewbox>
-            </Border>
-            <TextBlock Text="Select a computer" FontSize="17" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Center" Margin="0,15,0,0"/>
-            <TextBlock Text="Select a computer to view device and recovery details." TextWrapping="Wrap" TextAlignment="Center" Foreground="#64748B" Margin="18,7,18,0" LineHeight="18"/>
-          </StackPanel>
-
-          <ScrollViewer x:Name="DetailPanel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed" Margin="0,0,-8,0">
-            <ScrollViewer.Resources>
-              <Style TargetType="ScrollBar">
-                <Setter Property="Width" Value="7"/>
-                <Setter Property="Margin" Value="10,3,2,3"/>
-                <Setter Property="Background" Value="Transparent"/>
-                <Setter Property="Template">
-                  <Setter.Value>
-                    <ControlTemplate TargetType="ScrollBar">
-                      <Grid Background="Transparent">
-                        <Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}">
-                          <Track.DecreaseRepeatButton><RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/></Track.DecreaseRepeatButton>
-                          <Track.Thumb>
-                            <Thumb MinHeight="34" Background="#CBD5E1">
-                              <Thumb.Template>
-                                <ControlTemplate TargetType="Thumb">
-                                  <Border x:Name="ThumbBorder" Background="{TemplateBinding Background}" CornerRadius="3.5"/>
-                                  <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ThumbBorder" Property="Background" Value="#94A3B8"/></Trigger></ControlTemplate.Triggers>
-                                </ControlTemplate>
-                              </Thumb.Template>
-                            </Thumb>
-                          </Track.Thumb>
-                          <Track.IncreaseRepeatButton><RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Background="Transparent" BorderThickness="0" Opacity="0" Focusable="False"/></Track.IncreaseRepeatButton>
-                        </Track>
-                      </Grid>
-                    </ControlTemplate>
-                  </Setter.Value>
-                </Setter>
-              </Style>
-            </ScrollViewer.Resources>
-            <StackPanel Margin="0,0,16,0">
-              <StackPanel>
-                <Grid>
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                  <TextBlock x:Name="DetailDeviceName" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center"/>
-                  <Border x:Name="HeaderComplianceBadge" Grid.Column="1" CornerRadius="9" Padding="6,3" Margin="8,0,0,0" VerticalAlignment="Center" Background="#F1F5F9" ToolTip="Compliance reported by Intune at the last inventory refresh; not a live health check.">
-                    <TextBlock x:Name="HeaderComplianceText" Text="Unknown" FontSize="10.5" FontWeight="SemiBold" Foreground="#475569" AutomationProperties.Name="Compliance: Unknown"/>
-                  </Border>
-                </Grid>
-                <TextBlock x:Name="DetailPrimaryUser" Foreground="#475569" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                <TextBlock x:Name="DetailUserPrincipalName" Foreground="{StaticResource MutedBrush}" FontSize="11.5" Margin="0,2,0,0" TextWrapping="Wrap"/>
-              </StackPanel>
-
-              <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                <Border x:Name="DetailLapsBadge" Background="{StaticResource SuccessSoftBrush}" CornerRadius="11" Padding="8,4" HorizontalAlignment="Left">
-                  <StackPanel Orientation="Horizontal">
-                    <Ellipse x:Name="DetailLapsDot" Width="7" Height="7" Fill="{StaticResource SuccessBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailLapsStatus" Foreground="{StaticResource SuccessBrush}" FontSize="11" FontWeight="SemiBold"/>
-                  </StackPanel>
-                </Border>
-                <Border x:Name="DetailBitLockerBadge" Background="{StaticResource PrimarySoftBrush}" CornerRadius="11" Padding="8,4" HorizontalAlignment="Left" Margin="6,0,0,0">
-                  <StackPanel Orientation="Horizontal">
-                    <Ellipse x:Name="DetailBitLockerDot" Width="7" Height="7" Fill="#2563EB" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailBitLockerStatus" Foreground="#1D4ED8" FontSize="11" FontWeight="SemiBold"/>
-                  </StackPanel>
-                </Border>
-              </StackPanel>
-
-              <Grid Margin="0,11,0,0">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                <Button x:Name="OpenIntuneButton" Grid.Column="0" Style="{StaticResource PortalLinkButton}" IsEnabled="False" AutomationProperties.Name="Open selected device in Intune">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Open in Intune" VerticalAlignment="Center"/>
-                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe MDL2 Assets" FontSize="10.5" Margin="6,0,0,0" VerticalAlignment="Center"/>
-                  </StackPanel>
-                </Button>
-                <Button x:Name="OpenEntraButton" Grid.Column="2" Style="{StaticResource PortalLinkButton}" IsEnabled="False" AutomationProperties.Name="Open selected device in Entra">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Open in Entra" VerticalAlignment="Center"/>
-                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe MDL2 Assets" FontSize="10.5" Margin="6,0,0,0" VerticalAlignment="Center"/>
-                  </StackPanel>
-                </Button>
-              </Grid>
-
-              <Border x:Name="EntraOnlyNotice" Background="#FFF7ED" BorderBrush="#F59E0B" BorderThickness="3,0,0,0" CornerRadius="7" Padding="10,8" Margin="0,11,0,0" Visibility="Collapsed">
-                <StackPanel>
-                  <TextBlock Text="Entra only" Foreground="#9A3412" FontSize="11.5" FontWeight="SemiBold"/>
-                  <TextBlock Text="No matching Intune managed-device record" Foreground="#B45309" FontSize="10.5" Margin="0,2,0,0" TextWrapping="Wrap"/>
-                </StackPanel>
-              </Border>
-
-              <Border Background="#F1F5F9" CornerRadius="9" Padding="3" Margin="0,14,0,0">
-                <Grid>
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                  <Button x:Name="LapsTabButton" Grid.Column="0" Content="LAPS" Style="{StaticResource SecondaryButton}" Height="34" MinHeight="34" Padding="10,5" BorderThickness="0"/>
-                  <Button x:Name="BitLockerTabButton" Grid.Column="1" Content="BitLocker" Style="{StaticResource SecondaryButton}" Height="34" MinHeight="34" Padding="10,5" BorderThickness="0" Background="Transparent"/>
-                </Grid>
-              </Border>
-
-              <StackPanel x:Name="LapsRecoveryPanel">
-                <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="13" Margin="0,10,0,0">
-                  <StackPanel>
-                    <TextBlock Text="LOCAL ADMINISTRATOR" Foreground="#64748B" FontSize="9.5" FontWeight="Bold" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="AccountNameText" Text="Retrieved with password" Foreground="#334155" FontSize="13" FontWeight="SemiBold" Margin="0,5,0,0" TextWrapping="Wrap"/>
-                    <TextBlock x:Name="PasswordText" Text="••••••••••••••••" FontFamily="Cascadia Mono, Consolas" FontSize="18" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,10,0,0" TextWrapping="Wrap"/>
-                    <Grid Margin="0,5,0,0">
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                      <Ellipse x:Name="PasswordStatusDot" Width="6" Height="6" Fill="#94A3B8" Margin="0,4,6,0" VerticalAlignment="Top"/>
-                      <TextBlock x:Name="PasswordCountdownText" Grid.Column="1" Text="Password remains hidden until requested" Foreground="#64748B" FontSize="10.5" TextWrapping="Wrap"/>
-                    </Grid>
-                    <Grid Margin="0,10,0,0">
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                      <Grid.RowDefinitions><RowDefinition Height="22"/><RowDefinition Height="22"/></Grid.RowDefinitions>
-                      <TextBlock Grid.Row="0" Text="Changed" Foreground="#64748B" FontSize="10.5" VerticalAlignment="Center"/>
-                      <TextBlock x:Name="DetailBackupDate" Grid.Row="0" Grid.Column="1" Foreground="#334155" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                      <TextBlock Grid.Row="1" Text="Next refresh" Foreground="#64748B" FontSize="10.5" VerticalAlignment="Center"/>
-                      <TextBlock x:Name="DetailRefreshDate" Grid.Row="1" Grid.Column="1" Foreground="#334155" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    </Grid>
-                  </StackPanel>
-                </Border>
-
-                <Button x:Name="CopyPasswordButton" Style="{StaticResource PrimaryButton}" Height="44" Margin="0,10,0,8" IsEnabled="False" ToolTip="Copy password (Ctrl + Shift + C)" AutomationProperties.Name="Copy local administrator password">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="CopyPasswordButtonText" Text="Copy password" VerticalAlignment="Center"/>
-                  </StackPanel>
-                </Button>
-                <Grid>
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                  <Button x:Name="RevealPasswordButton" Grid.Column="0" Content="Reveal briefly" Style="{StaticResource SecondaryButton}" Height="38" FontSize="11" IsEnabled="False" ToolTip="Reveal for a short, timed interval"/>
-                  <Button x:Name="CopyAccountButton" Grid.Column="2" Content="Copy username" Style="{StaticResource SecondaryButton}" Height="38" FontSize="11" IsEnabled="False" ToolTip="Copy the local administrator account name"/>
-                </Grid>
-              </StackPanel>
-
-              <StackPanel x:Name="BitLockerRecoveryPanel" Visibility="Collapsed">
-                <TextBlock Text="RECOVERY KEY" Foreground="#64748B" FontSize="9.5" FontWeight="Bold" Margin="0,11,0,6"/>
-                <ComboBox x:Name="BitLockerKeySelector"
-                          Style="{StaticResource RecoveryKeyPicker}"
-                          TextSearch.TextPath="Id"
-                          MaxDropDownHeight="232"
-                          IsEnabled="False"
-                          ToolTip="Choose a BitLocker recovery-key record"
-                          AutomationProperties.Name="BitLocker recovery key record"/>
-                <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="13,7" Margin="0,9,0,0">
-                  <StackPanel>
-                    <Grid>
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                      <TextBlock x:Name="BitLockerVolumeText" Text="No recovery key" Foreground="#334155" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-                      <TextBlock x:Name="BitLockerKeyIdText" Grid.Column="1" Foreground="#64748B" FontSize="10" FontFamily="Cascadia Mono, Consolas" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                    </Grid>
-                    <TextBlock x:Name="BitLockerKeyText" Text="••••••-••••••-••••••-••••••-••••••-••••••-••••••-••••••" FontFamily="Cascadia Mono, Consolas" FontSize="13" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="19"/>
-                    <Grid Margin="0,6,0,0">
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                      <Ellipse x:Name="BitLockerStatusDot" Width="6" Height="6" Fill="#94A3B8" Margin="0,4,6,0" VerticalAlignment="Top"/>
-                      <TextBlock x:Name="BitLockerCountdownText" Grid.Column="1" Text="Recovery key remains hidden until requested" Foreground="#64748B" FontSize="10.5" TextWrapping="Wrap"/>
-                    </Grid>
-                    <Grid Margin="0,9,0,0">
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                      <TextBlock Text="Backed up" Foreground="#64748B" FontSize="10.5" VerticalAlignment="Center"/>
-                      <TextBlock x:Name="BitLockerCreatedText" Grid.Column="1" Foreground="#334155" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    </Grid>
-                  </StackPanel>
-                </Border>
-                <Button x:Name="CopyRecoveryKeyButton" Style="{StaticResource PrimaryButton}" Height="44" Margin="0,10,0,8" IsEnabled="False" ToolTip="Copy recovery key (Ctrl + Shift + C)" AutomationProperties.Name="Copy BitLocker recovery key">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="CopyRecoveryKeyButtonText" Text="Copy recovery key" VerticalAlignment="Center"/>
-                  </StackPanel>
-                </Button>
-                <Button x:Name="RevealRecoveryKeyButton" Content="Reveal briefly" Style="{StaticResource SecondaryButton}" Height="38" FontSize="11" IsEnabled="False" ToolTip="Reveal for a short, timed interval"/>
-              </StackPanel>
-
-              <Border BorderBrush="#E8EDF4" BorderThickness="0,1,0,0" Margin="0,15,0,0" Padding="0,13,0,0">
-                <StackPanel>
-                  <Grid Margin="0,0,0,5">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Text="DEVICE DETAILS" Foreground="#64748B" FontSize="9.5" FontWeight="Bold" VerticalAlignment="Center"/>
-                    <Button x:Name="CopyDeviceDetailsButton" Grid.Column="1" Content="Copy details" Style="{StaticResource PortalLinkButton}" Padding="7,3" MinHeight="26" IsEnabled="False" ToolTip="Copy device name, primary user/UPN, serial and OS from the current inventory. No recovery secrets. Clipboard clears automatically." AutomationProperties.Name="Copy device details for a support ticket"/>
-                  </Grid>
-                  <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                      <RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/><RowDefinition Height="28"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="Model" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailModel" Grid.Row="0" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="1" Text="OS" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailOperatingSystem" Grid.Row="1" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="2" Text="Last Intune sync" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailLastSync" Grid.Row="2" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="3" Text="Entra activity" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailEntraActivity" Grid.Row="3" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="4" Text="Serial number" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailSerial" Grid.Row="4" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="5" Text="Compliance" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                      <Ellipse x:Name="DetailComplianceDot" Width="7" Height="7" Fill="#94A3B8" Margin="0,0,6,0"/>
-                      <TextBlock x:Name="DetailCompliance" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold"/>
-                    </StackPanel>
-                    <TextBlock Grid.Row="6" Text="Encrypted" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailEncrypted" Grid.Row="6" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="7" Text="Ownership" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailOwnership" Grid.Row="7" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="8" Text="Join type" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="DetailJoinType" Grid.Row="8" Grid.Column="1" Foreground="#172033" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="9" Text="Management" Foreground="#64748B" FontSize="11" VerticalAlignment="Center"/>
-                    <Border x:Name="DetailManagementBadge" Grid.Row="9" Grid.Column="1" Background="#EFF6FF" BorderBrush="#DBEAFE" BorderThickness="1" CornerRadius="10" Padding="7,3" HorizontalAlignment="Left" VerticalAlignment="Center">
-                      <StackPanel Orientation="Horizontal">
-                        <Ellipse x:Name="DetailSourceDot" Width="6" Height="6" Fill="#2563EB" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="DetailSource" Foreground="#1D4ED8" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                      </StackPanel>
-                    </Border>
-                  </Grid>
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
-      </Border>
-    </Grid>
-
-    <Border Grid.Row="3" Background="White" BorderBrush="#E4E9F0" BorderThickness="0,1,0,0">
-      <Grid Margin="24,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <Grid VerticalAlignment="Center" Margin="0,0,12,0">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#64748B" Margin="0,0,8,0" VerticalAlignment="Center"/>
-          <ProgressBar x:Name="BusyIndicator" Grid.Column="1" Width="64" Height="3" IsIndeterminate="True" Foreground="{StaticResource PrimaryBrush}" Visibility="Collapsed" Margin="0,0,10,0"/>
-          <TextBlock x:Name="FooterStatusText" Grid.Column="2" Text="Starting..." Foreground="#64748B" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite"/>
-        </Grid>
-        <TextBlock x:Name="DeviceCountText" Grid.Column="1" Foreground="#64748B" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-      </Grid>
-    </Border>
-
-    <Border x:Name="ToastBorder" Grid.RowSpan="4" Panel.ZIndex="40" Background="#172033" BorderBrush="#334155" BorderThickness="1" CornerRadius="9" Padding="13,11" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,58" Visibility="Collapsed">
-      <Border.Effect><DropShadowEffect Color="#33000000" BlurRadius="14" ShadowDepth="3" Opacity="0.5"/></Border.Effect>
-      <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Border Width="20" Height="20" CornerRadius="10" Background="#20FFFFFF" VerticalAlignment="Top">
-          <TextBlock x:Name="ToastIcon" Text="✓" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-        </Border>
-        <TextBlock x:Name="ToastText" Grid.Column="1" Foreground="White" FontSize="12.5" FontWeight="SemiBold" MaxWidth="400" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Assertive"/>
-      </Grid>
-    </Border>
-
-    <Border x:Name="AuthOverlay" Grid.RowSpan="4" Panel.ZIndex="50" Background="#EAF5F7FB" Visibility="Collapsed" Focusable="True" AutomationProperties.Name="Microsoft authentication dialog" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle">
-      <Border Background="White" BorderBrush="#CFD8E5" BorderThickness="1" CornerRadius="14" Padding="28" Width="560" HorizontalAlignment="Center" VerticalAlignment="Center" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle">
-        <Border.Effect><DropShadowEffect Color="#260F172A" BlurRadius="24" ShadowDepth="6" Opacity="0.55"/></Border.Effect>
-        <StackPanel>
-          <Grid>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Border Width="42" Height="42" CornerRadius="11" Background="{StaticResource PrimarySoftBrush}">
-              <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#2563EB" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-              <TextBlock x:Name="AuthOverlayTitle" Text="Microsoft sign-in" FontSize="21" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"/>
-              <TextBlock x:Name="AuthOverlaySubtitle" Text="Connect to load devices" Foreground="#64748B" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
-          </Grid>
-          <TextBlock x:Name="AuthOverlayInstruction" Text="Use the configured administrator account and follow your organization's sign-in requirements." TextWrapping="Wrap" Foreground="#64748B" Margin="0,16,0,12" LineHeight="18"/>
-          <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="11,8" Margin="0,0,0,14">
-            <Grid>
-              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <Ellipse Width="7" Height="7" Fill="#2563EB" Margin="0,0,8,0" VerticalAlignment="Center"/>
-              <TextBlock x:Name="AuthExpectedAccountText" Grid.Column="1" Text="Administrator account" Foreground="#334155" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            </Grid>
-          </Border>
-          <Border Background="#EEF4FF" BorderBrush="#DBEAFE" BorderThickness="1" CornerRadius="10" Padding="18">
-            <StackPanel>
-              <TextBlock Text="DEVICE CODE" FontSize="9.5" FontWeight="Bold" Foreground="#64748B" HorizontalAlignment="Center"/>
-              <TextBlock x:Name="DeviceCodeText" Text="Waiting for Microsoft..." FontFamily="Cascadia Mono, Consolas" FontSize="28" FontWeight="Bold" Foreground="#172033" HorizontalAlignment="Center" Margin="0,7,0,0"/>
-            </StackPanel>
-          </Border>
-          <TextBlock x:Name="AuthOverlayStatus" Text="Preparing sign-in..." Foreground="#475569" HorizontalAlignment="Stretch" TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,17" AutomationProperties.LiveSetting="Polite"/>
-          <Grid>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Button x:Name="CopyCodeButton" Grid.Column="0" Content="Copy code" Style="{StaticResource SecondaryButton}" IsEnabled="False"/>
-            <Button x:Name="OpenSignInButton" Grid.Column="2" Content="Open sign-in page" Style="{StaticResource PrimaryButton}" IsEnabled="False"/>
-          </Grid>
-          <Button x:Name="CancelVerificationButton" Content="Cancel verification" Style="{StaticResource SecondaryButton}" Height="34" Margin="0,10,0,0" Visibility="Collapsed" AutomationProperties.Name="Cancel Microsoft verification"/>
-          <TextBlock x:Name="AuthOverlayFooter" Text="Intune Device Workbench continues automatically after sign-in." Foreground="#94A3B8" FontSize="10.5" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center" Margin="20,14,20,0"/>
-        </StackPanel>
-      </Border>
-    </Border>
-  </Grid>
-</Window>
-'@
-
-$reader = [System.Xml.XmlNodeReader]::new([xml]$xaml)
-$window = [Windows.Markup.XamlReader]::Load($reader)
+$windowMarkupPath = Join-Path $appRoot 'assets\WorkbenchWindow.xaml'
+$window = [Windows.Markup.XamlReader]::Parse([IO.File]::ReadAllText($windowMarkupPath))
 if (Test-Path -LiteralPath $iconPath -PathType Leaf) {
     $window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create([Uri]::new($iconPath, [UriKind]::Absolute))
 }
@@ -1244,7 +208,11 @@ param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $Co
 & {
     $ErrorActionPreference = 'Stop'
     Import-Module $CoreModulePath -Force
-    Import-Module Microsoft.Graph.Authentication -MinimumVersion ([version]$MinimumGraphVersion) -ErrorAction Stop
+    try { Import-Module Microsoft.Graph.Authentication -MinimumVersion ([version]$MinimumGraphVersion) -ErrorAction Stop }
+    catch {
+        [pscustomobject]@{ Kind='Error'; ErrorCode='GraphModuleUnavailable'; Message=''; StatusCode=$null }
+        return
+    }
 
     try {
         $null = Set-MgRequestContext -ClientTimeout 20 -MaxRetry 1
@@ -1254,7 +222,7 @@ param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $Co
             TenantId=$TenantId; UseDeviceCode=$true; Scopes=$RequiredScopes
             ContextScope='CurrentUser'; ClientTimeout=20; NoWelcome=$true; ErrorAction='Stop'
         }
-        Connect-MgGraph @connectParameters
+        Connect-MgGraph @connectParameters 6>&1
         $context = Get-MgContext
         $validation = Test-LapsGraphContext -Context $context -ExpectedAccount $ExpectedAccount -ExpectedTenantId $ExpectedTenantObjectId -RequiredScopes $RequiredScopes
         if (-not $validation.IsValid) {
@@ -1264,7 +232,8 @@ param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $Co
 
         # Context metadata is not proof that the token or connection works.
         # A real request uses an existing scope and never retrieves recovery data.
-        $null = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/devices?$select=id&$top=1' -OutputType PSObject -ErrorAction Stop
+        $probe = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/devices?$select=id&$top=1' -OutputType PSObject -ErrorAction Stop
+        $null = Read-GraphCollectionPage -Response $probe -CollectionPath '/v1.0/devices'
         [pscustomobject]@{
             Kind='AuthResult'; Account=[string]$context.Account; TenantId=[string]$context.TenantId
             Scopes=@($context.Scopes); ConnectionVerified=$true
@@ -1495,70 +464,40 @@ param($CoreModulePath)
     function Invoke-PagedGraphGet {
         param([Parameter(Mandatory)][string]$Uri)
 
-        $items = [System.Collections.Generic.List[object]]::new()
         $visited = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $collectionPath = ([uri]$Uri).AbsolutePath
         $next = $Uri
-        while (-not [string]::IsNullOrWhiteSpace($next)) {
-            $pageUri = [uri]$next
-            if (-not $pageUri.IsAbsoluteUri -or $pageUri.Scheme -ne 'https' -or
-                $pageUri.Host -ne 'graph.microsoft.com' -or -not $pageUri.IsDefaultPort -or
-                $pageUri.UserInfo -or $pageUri.Fragment -or
-                -not [string]::Equals($pageUri.AbsolutePath, $collectionPath, [StringComparison]::Ordinal)) {
-                throw 'Microsoft Graph returned an untrusted inventory page link.'
-            }
-            if (-not $visited.Add($pageUri.AbsoluteUri) -or $visited.Count -gt 10000) {
+        while ($next) {
+            if (-not $visited.Add($next) -or $visited.Count -gt 10000) {
                 throw 'Microsoft Graph inventory pagination did not complete safely.'
             }
             $response = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType PSObject -ErrorAction Stop
-            # A missing or malformed collection is not a successful empty page.
-            # Reject the refresh so the UI retains its last complete inventory.
-            if ($null -eq $response -or $null -eq $response.PSObject.Properties['value'] -or
-                $response.value -isnot [array]) {
-                throw 'Microsoft Graph returned a malformed inventory collection.'
-            }
-            foreach ($item in @($response.value)) {
-                $recordId = [guid]::Empty
-                if ($null -eq $item -or $item -isnot [pscustomobject] -or
-                    $null -eq $item.PSObject.Properties['id'] -or
-                    -not [guid]::TryParse([string]$item.id, [ref]$recordId) -or $recordId -eq [guid]::Empty) {
-                    throw 'Microsoft Graph returned a malformed inventory record.'
-                }
-                $items.Add($item)
-            }
-            $nextProperty = $response.PSObject.Properties['@odata.nextLink']
-            if ($null -ne $nextProperty -and $null -ne $nextProperty.Value -and
-                ($nextProperty.Value -isnot [string] -or [string]::IsNullOrWhiteSpace($nextProperty.Value))) {
-                throw 'Microsoft Graph returned a malformed inventory page link.'
-            }
-            $next = if ($null -eq $nextProperty) { $null } else { [string]$nextProperty.Value }
+            $page = Read-GraphCollectionPage -Response $response -CollectionPath $collectionPath
+            $page.Items
+            $next = $page.NextLink
         }
-        return @($items)
     }
 
     try {
-        $managedUri = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$select=id,deviceName,azureADDeviceId,serialNumber,operatingSystem,osVersion,model,manufacturer,lastSyncDateTime,complianceState,managementState,managedDeviceOwnerType,deviceEnrollmentType,isEncrypted,managementAgent,enrolledDateTime"
+        $managedUri = 'https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$select=id,deviceName,azureADDeviceId,serialNumber,operatingSystem,osVersion,model,manufacturer,lastSyncDateTime,complianceState,managedDeviceOwnerType,deviceEnrollmentType,isEncrypted,managementAgent,enrolledDateTime'
         $lapsUri = "https://graph.microsoft.com/v1.0/directory/deviceLocalCredentials?`$select=id,deviceName,lastBackupDateTime,refreshDateTime"
         $bitLockerUri = "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys"
-        $entraUri = "https://graph.microsoft.com/v1.0/devices?`$select=id,deviceId,displayName,accountEnabled,operatingSystem,operatingSystemVersion,trustType,approximateLastSignInDateTime,registrationDateTime,isManaged,isCompliant,deviceOwnership,manufacturer,model"
+        $entraUri = 'https://graph.microsoft.com/v1.0/devices?$select=id,deviceId,displayName,accountEnabled,operatingSystem,operatingSystemVersion,trustType,approximateLastSignInDateTime,manufacturer,model'
 
-        $managedDevices = @(Invoke-PagedGraphGet -Uri $managedUri)
+        $currentManagedDevices = Get-CurrentManagedDeviceMap -ManagedDevices @(Invoke-PagedGraphGet -Uri $managedUri)
         $stage = 'Intune primary users'
-        $primaryUsers = Get-IntunePrimaryUserMap -ManagedDevices $managedDevices
+        $primaryUsers = Get-IntunePrimaryUserMap -ManagedDevices @($currentManagedDevices.Values)
         $stage = 'LAPS metadata'
         $lapsMetadata = @(Invoke-PagedGraphGet -Uri $lapsUri)
         $stage = 'BitLocker metadata'
         $bitLockerMetadata = @(Invoke-PagedGraphGet -Uri $bitLockerUri)
         $stage = 'Entra device inventory'
         $entraDevices = @(Invoke-PagedGraphGet -Uri $entraUri)
-        $rows = @(Merge-IntuneLapsDeviceData -ManagedDevices $managedDevices -LapsMetadata $lapsMetadata -BitLockerMetadata $bitLockerMetadata -EntraDevices $entraDevices -PrimaryUsersByManagedDeviceId $primaryUsers)
+        $rows = @(Merge-IntuneLapsDeviceData -CurrentManagedDevices $currentManagedDevices -LapsMetadata $lapsMetadata -BitLockerMetadata $bitLockerMetadata -EntraDevices $entraDevices -PrimaryUsersByManagedDeviceId $primaryUsers)
 
         [pscustomobject]@{
             Kind = 'InventoryResult'
             Devices = $rows
-            TotalCount = $rows.Count
-            LapsReadyCount = @($rows | Where-Object LapsAvailable).Count
-            BitLockerReadyCount = @($rows | Where-Object BitLockerAvailable).Count
             LoadedAt = [DateTimeOffset]::Now
         }
     }
@@ -1574,6 +513,7 @@ param($DeviceId, $CoreModulePath)
     $ErrorActionPreference = 'Stop'
     Import-Module $CoreModulePath -Force
     $response = $null
+    $records = @()
     $credential = $null
     $password = $null
 
@@ -1584,37 +524,30 @@ param($DeviceId, $CoreModulePath)
         }
 
         $escapedId = [Uri]::EscapeDataString($parsedId.ToString())
-        $uri = "https://graph.microsoft.com/v1.0/directory/deviceLocalCredentials/$escapedId`?`$select=id,deviceName,lastBackupDateTime,refreshDateTime,credentials"
+        $uri = "https://graph.microsoft.com/v1.0/directory/deviceLocalCredentials/$escapedId`?`$select=id,credentials"
         $response = Invoke-MgGraphRequest -Method GET -Uri $uri -OutputType PSObject -ErrorAction Stop
-        if ($null -ne $response.PSObject.Properties['value'] -and $null -ne $response.value) {
-            $response = $response.value
+        $records = @($response)
+        if ($null -ne $response -and $null -ne $response.PSObject.Properties['value']) {
+            $records = @($response.value)
         }
-
-        if ([guid]$response.id -ne $parsedId) {
+        $returnedId = [guid]::Empty
+        if ($records.Count -ne 1 -or $null -eq $records[0] -or $null -eq $records[0].PSObject.Properties['id'] -or
+            -not [guid]::TryParse([string]$records[0].id, [ref]$returnedId) -or $returnedId -ne $parsedId) {
             throw 'Microsoft Graph returned a LAPS credential for a different device.'
         }
 
-        $credential = Select-CurrentLapsCredential -Credentials @($response.credentials)
+        $credential = Select-CurrentLapsCredential -Credentials @($records[0].credentials)
         if ($null -eq $credential) {
             [pscustomobject]@{ Kind = 'Error'; ErrorCode = 'NoCredential'; Message = 'No current LAPS credential was returned.'; StatusCode = 404 }
             return
         }
 
-        $password = $null
-        try {
-            $password = ConvertFrom-LapsPasswordBase64 -PasswordBase64 ([string]$credential.passwordBase64)
-        }
-        finally {
-            $credential.passwordBase64 = $null
-        }
+        $password = ConvertFrom-LapsPasswordBase64 -PasswordBase64 ([string]$credential.passwordBase64)
 
         [pscustomobject]@{
             Kind = 'CredentialResult'
             DeviceId = $parsedId.ToString()
-            DeviceName = [string]$response.deviceName
             AccountName = [string]$credential.accountName
-            AccountSid = [string]$credential.accountSid
-            BackupDateTime = [DateTimeOffset]$credential.backupDateTime
             Password = $password
         }
     }
@@ -1622,8 +555,9 @@ param($DeviceId, $CoreModulePath)
         ConvertTo-GraphOperationError -ErrorRecord $_
     }
     finally {
-        if ($null -ne $response -and $null -ne $response.PSObject.Properties['credentials']) {
-            foreach ($item in @($response.credentials)) {
+        foreach ($record in $records) {
+            if ($null -eq $record -or $null -eq $record.PSObject.Properties['credentials']) { continue }
+            foreach ($item in @($record.credentials)) {
                 if ($null -ne $item -and $null -ne $item.PSObject.Properties['passwordBase64']) { $item.passwordBase64 = $null }
             }
         }
@@ -1653,12 +587,13 @@ param($DeviceId, $RecoveryKeyId, $CoreModulePath)
         }
 
         $escapedKeyId = [Uri]::EscapeDataString($parsedKeyId.ToString())
-        $uri = "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys/$escapedKeyId`?`$select=id,key,deviceId,createdDateTime,volumeType"
+        $uri = "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys/$escapedKeyId`?`$select=id,key,deviceId"
         $response = Invoke-MgGraphRequest -Method GET -Uri $uri -OutputType PSObject -ErrorAction Stop
         if ([guid]$response.id -ne $parsedKeyId) {
             throw 'Microsoft Graph returned a different BitLocker recovery-key record.'
         }
-        if (-not [string]::Equals([string]$response.deviceId, $parsedDeviceId.ToString(), [StringComparison]::OrdinalIgnoreCase)) {
+        $responseDeviceId = [guid]::Empty
+        if (-not [guid]::TryParse([string]$response.deviceId, [ref]$responseDeviceId) -or $responseDeviceId -ne $parsedDeviceId) {
             throw 'Microsoft Graph returned a BitLocker key for a different device.'
         }
 
@@ -1671,8 +606,6 @@ param($DeviceId, $RecoveryKeyId, $CoreModulePath)
             Kind = 'BitLockerKeyResult'
             DeviceId = $parsedDeviceId.ToString()
             RecoveryKeyId = $parsedKeyId.ToString()
-            CreatedDateTime = [DateTimeOffset]$response.createdDateTime
-            VolumeType = [string]$response.volumeType
             RecoveryKey = $recoveryKey
         }
     }
@@ -1879,7 +812,29 @@ function Update-ClipboardStatusForSelection {
 }
 
 function Open-DeviceSignInPage {
-    Start-Process -FilePath 'rundll32.exe' -ArgumentList 'url.dll,FileProtocolHandler', '"https://login.microsoft.com/device"' | Out-Null
+    try {
+        Start-Process -FilePath (Join-Path ([Environment]::SystemDirectory) 'rundll32.exe') -ArgumentList 'url.dll,FileProtocolHandler', '"https://login.microsoft.com/device"' -ErrorAction Stop
+    }
+    catch {
+        Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Open https://login.microsoft.com/device in your browser and enter the code shown here.'
+    }
+}
+
+function Set-ProtectedClipboardText {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [Parameter(Mandatory)][ValidateSet('LAPS','BitLocker','DeviceDetails','Account','DeviceCode')][string]$Kind,
+        [AllowNull()][object]$DeviceId,
+        [AllowNull()][object]$RecoveryKeyId,
+        [int]$ClearSeconds = $settings.ClipboardClearSeconds
+    )
+    $deadline = (Get-SensitiveClockNow).AddSeconds($ClearSeconds)
+    [M365Workbench.Security.SecureClipboard]::SetSensitiveText($Text, $windowHandle)
+    # A failed write must leave the previous item's cleanup obligation intact.
+    $script:ClipboardClearAt = $deadline
+    $script:ClipboardKind = $Kind
+    $script:ClipboardDeviceId = $DeviceId
+    $script:ClipboardRecoveryKeyId = $RecoveryKeyId
 }
 
 function Copy-SelectedDeviceDetails {
@@ -1890,12 +845,7 @@ function Copy-SelectedDeviceDetails {
 
     try {
         $text = Format-DeviceDetails -Device $selected
-        [M365Workbench.Security.SecureClipboard]::SetSensitiveText($text, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
-        # Commit tracking only after a successful write, including when a secret was copied before it.
-        $script:ClipboardClearAt = (Get-SensitiveClockNow).AddSeconds([int]$settings.ClipboardClearSeconds)
-        $script:ClipboardDeviceId = $null
-        $script:ClipboardKind = 'DeviceDetails'
-        $script:ClipboardRecoveryKeyId = $null
+        Set-ProtectedClipboardText -Text $text -Kind DeviceDetails
         $null = Update-ClipboardStatusForSelection
         Show-Toast -Message "Device details copied • clipboard clears in $($settings.ClipboardClearSeconds) seconds" -Kind Success
     }
@@ -1926,7 +876,7 @@ function Open-SelectedDevicePortal {
     }
 
     try {
-        Start-Process -FilePath 'rundll32.exe' -ArgumentList 'url.dll,FileProtocolHandler', $uri.AbsoluteUri | Out-Null
+        Start-Process -FilePath (Join-Path ([Environment]::SystemDirectory) 'rundll32.exe') -ArgumentList 'url.dll,FileProtocolHandler', $uri.AbsoluteUri -ErrorAction Stop
         Show-Toast -Message "Opening $Portal for $([string]$selected.DeviceName)." -Kind Success
     }
     catch {
@@ -1935,6 +885,11 @@ function Open-SelectedDevicePortal {
 }
 
 function Clear-AuthenticationClipboard {
+    $script:LastDeviceCode = $null
+    $script:SignInPageOpenedForCode = $null
+    $DeviceCodeText.Text = ''
+    $CopyCodeButton.IsEnabled = $false
+    $OpenSignInButton.IsEnabled = $false
     try {
         $null = [M365Workbench.Security.SecureClipboard]::ClearIfUnchanged()
         $script:ClipboardClearAt = [DateTimeOffset]::MinValue
@@ -1952,12 +907,12 @@ function Set-DeviceCode {
 
     $script:LastDeviceCode = $Code
     $DeviceCodeText.Text = $Code
-    Set-LiveStatusText -Control $AuthOverlayStatus -Message "Code copied. Sign in as $($settings.ExpectedAccount)."
     $CopyCodeButton.IsEnabled = $true
     $OpenSignInButton.IsEnabled = $true
 
     try {
-        [M365Workbench.Security.SecureClipboard]::SetSensitiveText($Code, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
+        Set-ProtectedClipboardText -Text $Code -Kind DeviceCode
+        Set-LiveStatusText -Control $AuthOverlayStatus -Message "Code copied. Sign in as $($settings.ExpectedAccount)."
     }
     catch {
         Set-LiveStatusText -Control $AuthOverlayStatus -Message 'The code is shown above. Copy it manually if needed.'
@@ -2949,11 +1904,7 @@ function Complete-CredentialAction {
 
     if ($Action -eq 'Copy') {
         try {
-            [M365Workbench.Security.SecureClipboard]::SetSensitiveText([string]$Credential.Password, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
-            $script:ClipboardClearAt = (Get-SensitiveClockNow).AddSeconds([int]$settings.ClipboardClearSeconds)
-            $script:ClipboardDeviceId = [string]$selected.EntraDeviceId
-            $script:ClipboardKind = 'LAPS'
-            $script:ClipboardRecoveryKeyId = $null
+            Set-ProtectedClipboardText -Text $Credential.Password -Kind LAPS -DeviceId $selected.EntraDeviceId
             Set-PasswordStatus -Message "Copied securely • clipboard clears in $($settings.ClipboardClearSeconds) seconds" -DotColor '#15803D' -TextColor '#166534'
             Show-Toast -Message "Password copied for $($selected.DeviceName)." -Kind Success
         }
@@ -2993,10 +1944,7 @@ function Invoke-CredentialAction {
         $demoCredential = [pscustomobject]@{
             Kind = 'CredentialResult'
             DeviceId = [string]$selected.EntraDeviceId
-            DeviceName = [string]$selected.DeviceName
             AccountName = 'DemoLapsAdmin'
-            AccountSid = 'S-1-5-21-DEMO-500'
-            BackupDateTime = [DateTimeOffset]::Now
             Password = 'Demo-Only!Laps-2026'
         }
         Complete-CredentialAction -Action $Action -Credential $demoCredential
@@ -3061,11 +2009,7 @@ function Complete-BitLockerAction {
 
     if ($Action -eq 'Copy') {
         try {
-            [M365Workbench.Security.SecureClipboard]::SetSensitiveText([string]$KeyResult.RecoveryKey, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
-            $script:ClipboardClearAt = (Get-SensitiveClockNow).AddSeconds([int]$settings.ClipboardClearSeconds)
-            $script:ClipboardDeviceId = [string]$selected.EntraDeviceId
-            $script:ClipboardKind = 'BitLocker'
-            $script:ClipboardRecoveryKeyId = [string]$selectedKey.Id
+            Set-ProtectedClipboardText -Text $KeyResult.RecoveryKey -Kind BitLocker -DeviceId $selected.EntraDeviceId -RecoveryKeyId $selectedKey.Id
             Set-BitLockerStatus -Message "Copied securely • clipboard clears in $($settings.ClipboardClearSeconds) seconds" -DotColor '#15803D' -TextColor '#166534'
             Show-Toast -Message "BitLocker recovery key copied for $($selected.DeviceName)." -Kind Success
         }
@@ -3108,8 +2052,6 @@ function Invoke-BitLockerAction {
             Kind = 'BitLockerKeyResult'
             DeviceId = [string]$selected.EntraDeviceId
             RecoveryKeyId = [string]$selectedKey.Id
-            CreatedDateTime = [DateTimeOffset]$selectedKey.CreatedDateTime
-            VolumeType = [string]$selectedKey.VolumeType
             RecoveryKey = '111111-222222-333333-444444-555555-666666-777777-888888'
         }
         Complete-BitLockerAction -Action $Action -KeyResult $demoKey
@@ -3167,31 +2109,36 @@ function Get-OperationResultObject {
 function Complete-GraphOperation {
     param([Parameter(Mandatory)][object]$Operation)
 
+    $workerError = $null
     try {
         if ($null -ne $Operation.StopAsyncResult) { $script:GraphPowerShell.EndStop($Operation.StopAsyncResult) }
         if ($null -ne $Operation.AsyncResult) { $null = $script:GraphPowerShell.EndInvoke($Operation.AsyncResult) }
     }
     catch {
-        # A sanitized error is produced below from the PowerShell error stream.
+        $workerError = $_
     }
 
     $operationName = [string]$Operation.Name
     $result = Get-OperationResultObject -Operation $Operation
     if ($null -eq $result) {
-        if ($operationName -in @('Credential', 'BitLockerKey') -and $Operation.CancellationRequested) {
-            # A stopped read may return nothing. Preserve any actual result/error
-            # above, especially a 401 that must still invalidate authentication.
-            $result = [pscustomobject]@{ Kind = 'RecoveryCanceled' }
+        if ($null -ne $script:GraphPowerShell -and $script:GraphPowerShell.Streams.Error.Count -gt 0) {
+            $workerError = $script:GraphPowerShell.Streams.Error[0]
+        }
+        if ($Operation.CancellationRequested -and ($null -eq $workerError -or
+            $workerError.Exception.GetBaseException() -is [Management.Automation.PipelineStoppedException])) {
+            $result = [pscustomobject]@{ Kind = if ($operationName -eq 'Inventory') { 'InventoryCanceled' } else { 'RecoveryCanceled' } }
+        }
+        elseif ($null -ne $workerError) {
+            $result = ConvertTo-GraphOperationError -ErrorRecord $workerError
         }
         else {
-            $errorText = if ($script:GraphPowerShell.Streams.Error.Count -gt 0) { [string]$script:GraphPowerShell.Streams.Error[0].Exception.Message } else { 'The background operation did not return a result.' }
-            $result = [pscustomobject]@{ Kind = 'Error'; ErrorCode = 'OperationFailed'; Message = $errorText; StatusCode = $null }
+            $result = [pscustomobject]@{ Kind = 'Error'; ErrorCode = 'OperationFailed'; Message = 'The background operation did not return a result.'; StatusCode = $null }
         }
     }
 
     $expectedKind = switch ($operationName) {
         'Authenticate' { 'AuthResult' }
-        'Inventory' { 'InventoryResult' }
+        'Inventory' { 'InventoryResult'; if ($Operation.CancellationRequested) { 'InventoryCanceled' } }
         'Credential' { 'CredentialResult'; if ($Operation.CancellationRequested) { 'RecoveryCanceled' } }
         'BitLockerKey' { 'BitLockerKeyResult'; if ($Operation.CancellationRequested) { 'RecoveryCanceled' } }
         'MicrosoftVerification' { 'MicrosoftVerificationResult'; 'VerificationError'; 'VerificationCanceled' }
@@ -3209,7 +2156,13 @@ function Complete-GraphOperation {
     $Operation.Output.Dispose()
     $script:CurrentOperation = $null
 
-    if ($operationName -eq 'Inventory' -and $Operation.CancellationRequested) {
+    $failureCategory = $null
+    if ($result.Kind -eq 'Error') {
+        $failureCategory = Get-GraphFailureCategory -ErrorCode $result.ErrorCode -Message $result.Message -StatusCode $result.StatusCode
+    }
+    $connectionLost = $failureCategory -in @('Authentication','Connectivity','Timeout','Service')
+    # Cancel discards a snapshot. A concurrent loss of connection still revokes recovery access.
+    if ($operationName -eq 'Inventory' -and $Operation.CancellationRequested -and -not $connectionLost) {
         Reset-InventoryControls
         Update-FilteredCount
         if ($script:AllDevices.Count -eq 0) {
@@ -3223,8 +2176,6 @@ function Complete-GraphOperation {
 
     if ($operationName -eq 'MicrosoftVerification') {
         Clear-AuthenticationClipboard
-        $script:LastDeviceCode = $null
-        $script:SignInPageOpenedForCode = $null
         $AuthOverlay.Visibility = 'Collapsed'
         $CancelVerificationButton.Visibility = 'Collapsed'
         $CancelVerificationButton.IsEnabled = $true
@@ -3270,19 +2221,16 @@ function Complete-GraphOperation {
         $failedRecoveryKind = $null
         $failedRecoveryAction = $null
         $statusCode = if ($null -eq $result.StatusCode) { $null } else { [Nullable[int]]([int]$result.StatusCode) }
-        $friendly = Get-FriendlyLapsErrorMessage -ErrorCode ([string]$result.ErrorCode) -Message ([string]$result.Message) -StatusCode $statusCode
+        $friendly = Get-FriendlyLapsErrorMessage -ErrorCode ([string]$result.ErrorCode) -Message ([string]$result.Message) -StatusCode $statusCode -Operation $operationName
         $stageProperty = $result.PSObject.Properties['Stage']
         if ($operationName -eq 'Inventory' -and $null -ne $stageProperty -and -not [string]::IsNullOrWhiteSpace([string]$stageProperty.Value)) {
             $friendly = "$friendly Failed while loading $([string]$stageProperty.Value)."
         }
         if ($operationName -eq 'Authenticate') {
-            $script:LastDeviceCode = $null
-            $script:SignInPageOpenedForCode = $null
             $AuthOverlay.Visibility = 'Collapsed'
             $script:AuthenticationVerificationGeneration = $null
         }
-        $failureCategory = Get-GraphFailureCategory -ErrorCode ([string]$result.ErrorCode) -Message ([string]$result.Message) -StatusCode $statusCode
-        if ($operationName -eq 'Authenticate' -or $failureCategory -in @('Authentication','Connectivity','Timeout','Service')) {
+        if ($operationName -eq 'Authenticate' -or $connectionLost) {
             Clear-AuthenticationClipboard
             Clear-SecretVerificationState
             Clear-SecretDisplay
@@ -3339,12 +2287,10 @@ function Complete-GraphOperation {
     switch ($operationName) {
         'Authenticate' {
             Clear-AuthenticationClipboard
-            $script:LastDeviceCode = $null
-            $script:SignInPageOpenedForCode = $null
             $AuthOverlay.Visibility = 'Collapsed'
-            if ($null -eq $result.PSObject.Properties['ConnectionVerified'] -or -not [bool]$result.ConnectionVerified) {
+            if ($null -eq $result.PSObject.Properties['ConnectionVerified'] -or
+                $result.ConnectionVerified -isnot [bool] -or -not $result.ConnectionVerified) {
                 $script:AuthenticationVerificationGeneration = $null
-                Clear-AuthenticationClipboard
                 Clear-SecretVerificationState
                 Clear-SecretDisplay
                 Set-AuthenticationDisplay -SignedIn $false -Text 'Connection not verified'
@@ -3580,11 +2526,7 @@ $CopyAccountButton.Add_Click({
         $null -ne $script:PendingSecretRequest -or $null -ne $script:LocalVerificationTask) { return }
     if (-not [string]::IsNullOrWhiteSpace($AccountNameText.Text) -and $AccountNameText.Text -ne 'Retrieved with password') {
         try {
-            [M365Workbench.Security.SecureClipboard]::SetSensitiveText($AccountNameText.Text, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
-            $script:ClipboardClearAt = (Get-SensitiveClockNow).AddSeconds(20)
-            $script:ClipboardDeviceId = $null
-            $script:ClipboardKind = 'Account'
-            $script:ClipboardRecoveryKeyId = $null
+            Set-ProtectedClipboardText -Text $AccountNameText.Text -Kind Account -ClearSeconds 20
             if ($PasswordText.Text -eq '••••••••••••••••') {
                 Set-PasswordStatus -Message 'Password remains hidden until requested'
             }
@@ -3601,7 +2543,7 @@ $SignInButton.Add_Click({ Start-Authentication })
 $CopyCodeButton.Add_Click({
     if (-not [string]::IsNullOrWhiteSpace($script:LastDeviceCode)) {
         try {
-            [M365Workbench.Security.SecureClipboard]::SetSensitiveText($script:LastDeviceCode, ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle)
+            Set-ProtectedClipboardText -Text $script:LastDeviceCode -Kind DeviceCode
             Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Code copied. Complete sign-in in the browser.'
         }
         catch { Set-LiveStatusText -Control $AuthOverlayStatus -Message 'Copy the code manually, then continue in the browser.' }

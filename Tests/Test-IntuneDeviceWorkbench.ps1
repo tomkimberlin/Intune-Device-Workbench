@@ -101,6 +101,8 @@ Assert-Equal -Actual (Select-CurrentLapsCredential -Credentials $credentials).ac
 $message = 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code A1B2C3D4E to authenticate.'
 $deviceCode = Get-DeviceCodeFromMessage -Message $message
 Assert-Equal -Actual $deviceCode.UserCode -Expected 'A1B2C3D4E' -Name 'Microsoft Graph device-code prompt is parsed'
+Assert-Equal -Actual $deviceCode.VerificationUrl -Expected 'https://login.microsoft.com/device' -Name 'Device-code prompts use the configured Microsoft sign-in page'
+Assert-True -Condition ($null -eq (Get-DeviceCodeFromMessage -Message ([pscustomobject]@{ Details=$message }))) -Name 'Structured worker results cannot create a sign-in prompt'
 Assert-True -Condition ($null -eq (Get-DeviceCodeFromMessage -Message 'ordinary output')) -Name 'Unrelated output is ignored by device-code parser'
 
 $verificationNow = [DateTimeOffset]::Parse('2026-08-31T12:00:00Z')
@@ -256,6 +258,7 @@ $launcherBytes = [IO.File]::ReadAllBytes($launcherTestPath)
 $launcherPeOffset = [BitConverter]::ToInt32($launcherBytes, 0x3C)
 $launcherSubsystem = [BitConverter]::ToUInt16($launcherBytes, $launcherPeOffset + 24 + 68)
 Assert-Equal -Actual $launcherSubsystem -Expected 2 -Name 'Generated launcher uses the Windows GUI subsystem without a console window'
+. (Join-Path $PSScriptRoot 'Test-Launcher.ps1')
 
 if (Test-Path -LiteralPath $shortcutIdentityTestPath -PathType Leaf) {
     Remove-Item -LiteralPath $shortcutIdentityTestPath -Force
@@ -305,6 +308,7 @@ $actualShortcutAppId = [M365Workbench.WindowsShellIdentity]::GetShortcutAppId($s
 Assert-Equal -Actual $actualShortcutAppId -Expected $expectedAppUserModelId -Name 'Windows shortcut stores the dedicated Intune Device Workbench AppUserModelID'
 
 $mainSource = [IO.File]::ReadAllText($mainScriptPath)
+$windowMarkup = [IO.File]::ReadAllText((Join-Path $appRoot 'assets\WorkbenchWindow.xaml'))
 $CopyDeviceDetailsButton = [pscustomobject]@{IsEnabled=$false}
 . (Join-Path $PSScriptRoot 'Test-Quality.ps1')
 . (Join-Path $PSScriptRoot 'Test-Workflow.ps1')
@@ -334,21 +338,21 @@ Assert-True -Condition ($fixtureDeviceNames.Count -gt 0 -and @($fixtureDeviceNam
 Assert-True -Condition ($fixtureSerialNumbers.Count -gt 0 -and @($fixtureSerialNumbers | Where-Object { -not $_.StartsWith('DEMO-SERIAL-') }).Count -eq 0) -Name 'Every embedded serial-number fixture is unmistakably synthetic'
 Assert-True -Condition ((Test-Path -LiteralPath $licensePath -PathType Leaf) -and [IO.File]::ReadAllText($licensePath).StartsWith('MIT License')) -Name 'Repository includes the MIT License'
 Assert-True -Condition ((Test-Path -LiteralPath $readmePath -PathType Leaf) -and (Test-Path -LiteralPath $securityPolicyPath -PathType Leaf)) -Name 'Public README and security policy are present'
-Assert-True -Condition ($mainSource.Contains('Intune Device Workbench') -and -not $mainSource.Contains('Entra + Intune Console')) -Name 'Application identity uses Intune Device Workbench throughout the UI'
+Assert-True -Condition ($mainSource.Contains('Intune Device Workbench') -and -not $windowMarkup.Contains('Entra + Intune Console')) -Name 'Application identity uses Intune Device Workbench throughout the UI'
 Assert-True -Condition ($mainSource.IndexOf('if ($DemoMode) {', [StringComparison]::Ordinal) -lt $mainSource.IndexOf("elseif (Test-Path -LiteralPath `$settingsPath -PathType Leaf)", [StringComparison]::Ordinal)) -Name 'Demo mode always uses synthetic settings even when a local tenant file exists'
 Assert-True -Condition ($mainSource.Contains("`$appUserModelId = '$expectedAppUserModelId'") -and $mainSource.Contains('[M365Workbench.WindowsShellIdentity]::SetCurrentProcessAppId($appUserModelId)') -and $mainSource.Contains('[M365Workbench.WindowsShellIdentity]::SetWindowAppId($windowHandle, $appUserModelId)')) -Name 'Running WPF process and window use the dedicated Intune Device Workbench AppUserModelID'
-Assert-True -Condition ($mainSource.Contains('x:Name="EntraOnlyFilterContainer"') -and $mainSource.Contains('x:Name="EntraOnlyCheckBox"') -and $mainSource.Contains('Style="{StaticResource FilterCheckBox}"') -and $mainSource.Contains('ManagementStateDescription')) -Name 'Entra-only and recovery-ready options use the same checkbox filter pattern'
-Assert-True -Condition (-not $mainSource.Contains('ManagementFilterButton') -and -not $mainSource.Contains('$OnlyReadyCheckBox.IsChecked = $false')) -Name 'Checkbox filters combine independently without hidden mutual exclusion'
-Assert-True -Condition ($mainSource.Contains('x:Name="DeviceTableOutline"') -and $mainSource.Contains('x:Name="DeviceCellFrame"') -and $mainSource.Contains('GridLinesVisibility="None"') -and $mainSource.Contains('BorderBrush="#D8E1EC"') -and $mainSource.Contains('BorderThickness="0,0,1,0"')) -Name 'Every device cell owns a deterministic right separator independent of DataGrid focus state'
-Assert-True -Condition ($mainSource.Contains('x:Name="DeviceTableSurface"') -and $mainSource.Contains('$DeviceTableSurface.Add_SizeChanged') -and $mainSource.Contains('[System.Windows.Media.RectangleGeometry]::new($bounds, 10, 10)')) -Name 'Device table content is clipped to the same radius as its rounded outline'
-Assert-True -Condition ($mainSource.Contains('<Style TargetType="DataGridCell">') -and $mainSource.Contains('<Setter Property="BorderThickness" Value="0"/>') -and $mainSource.Contains('<Setter Property="FocusVisualStyle" Value="{x:Null}"/>')) -Name 'Full-row selection does not draw a misleading per-cell focus outline'
+Assert-True -Condition ($windowMarkup.Contains('x:Name="EntraOnlyFilterContainer"') -and $windowMarkup.Contains('x:Name="EntraOnlyCheckBox"') -and $windowMarkup.Contains('Style="{StaticResource FilterCheckBox}"') -and $windowMarkup.Contains('ManagementStateDescription')) -Name 'Entra-only and recovery-ready options use the same checkbox filter pattern'
+Assert-True -Condition (-not $windowMarkup.Contains('ManagementFilterButton') -and -not $mainSource.Contains('$OnlyReadyCheckBox.IsChecked = $false')) -Name 'Checkbox filters combine independently without hidden mutual exclusion'
+Assert-True -Condition ($windowMarkup.Contains('x:Name="DeviceTableOutline"') -and $windowMarkup.Contains('x:Name="DeviceCellFrame"') -and $windowMarkup.Contains('GridLinesVisibility="None"') -and $windowMarkup.Contains('BorderBrush="#D8E1EC"') -and $windowMarkup.Contains('BorderThickness="0,0,1,0"')) -Name 'Every device cell owns a deterministic right separator independent of DataGrid focus state'
+Assert-True -Condition ($windowMarkup.Contains('x:Name="DeviceTableSurface"') -and $mainSource.Contains('$DeviceTableSurface.Add_SizeChanged') -and $mainSource.Contains('[System.Windows.Media.RectangleGeometry]::new($bounds, 10, 10)')) -Name 'Device table content is clipped to the same radius as its rounded outline'
+Assert-True -Condition ($windowMarkup.Contains('<Style TargetType="DataGridCell">') -and $windowMarkup.Contains('<Setter Property="BorderThickness" Value="0"/>') -and $windowMarkup.Contains('<Setter Property="FocusVisualStyle" Value="{x:Null}"/>')) -Name 'Full-row selection does not draw a misleading per-cell focus outline'
 Assert-True -Condition ($mainSource.Contains('$window.ShowInTaskbar = $false') -and $mainSource.Contains('$window.ShowActivated = $false') -and $mainSource.Contains('[System.Windows.SystemParameters]::VirtualScreenLeft - $window.Width - 100')) -Name 'Rendered visual previews stay off-screen and out of the taskbar'
-Assert-True -Condition ($mainSource.Contains('x:Key="DeviceListScrollThumbBrush"') -and $mainSource.Contains('x:Name="DeviceListVerticalThumb"') -and $mainSource.Contains('x:Name="DeviceListHorizontalThumb"') -and $mainSource.Contains('ScrollBar.PageLeftCommand') -and $mainSource.Contains('ScrollBar.PageRightCommand')) -Name 'Device list uses inset arrow-free scrollbars in both orientations'
-Assert-True -Condition ($mainSource.Contains('$DeviceGrid.Add_PreviewMouseWheel') -and $mainSource.Contains('$DeviceGrid.RowHeight * 0.75') -and $mainSource.Contains('ScrollToVerticalOffset($targetOffset)') -and $mainSource.Contains('VirtualizingPanel.ScrollUnit="Pixel"')) -Name 'Device wheel input uses a bounded sub-row pixel increment while retaining virtualization'
-Assert-True -Condition ($mainSource.Contains('x:Key="RecoveryKeyPicker"') -and $mainSource.Contains('x:Key="RecoveryKeyPickerItem"') -and $mainSource.Contains('x:Name="RecoveryKeyDropDownSurface"') -and $mainSource.Contains('x:Name="RecoveryKeyPickerChevron"') -and $mainSource.Contains('x:Name="RecoveryKeyScrollThumb"') -and $mainSource.Contains('Style="{StaticResource RecoveryKeyPicker}"') -and -not $mainSource.Contains('DisplayMemberPath="SelectorDisplay"')) -Name 'BitLocker recovery selector uses the dedicated modern picker instead of native Windows chrome'
-Assert-True -Condition ($mainSource.Contains('Text="{Binding VolumeDisplay}"') -and $mainSource.Contains('<Run Text="Backed up "/><Run Text="{Binding CreatedDisplay}"/>')) -Name 'Recovery-key choices align volume and backup date as a readable two-line record'
-Assert-True -Condition ($mainSource.Contains('x:Name="DetailDeviceName"') -and -not $mainSource.Contains('Text="&#xE770;"')) -Name 'Device detail header does not imply an unavailable chassis type'
-Assert-True -Condition ($mainSource.Contains('x:Name="OpenIntuneButton"') -and $mainSource.Contains('x:Name="OpenEntraButton"') -and $mainSource.Contains('Open-SelectedDevicePortal -Portal Intune') -and $mainSource.Contains('Open-SelectedDevicePortal -Portal Entra')) -Name 'Device detail panel exposes both validated admin-center deep links'
+Assert-True -Condition ($windowMarkup.Contains('x:Key="DeviceListScrollThumbBrush"') -and $windowMarkup.Contains('x:Name="DeviceListVerticalThumb"') -and $windowMarkup.Contains('x:Name="DeviceListHorizontalThumb"') -and $windowMarkup.Contains('ScrollBar.PageLeftCommand') -and $windowMarkup.Contains('ScrollBar.PageRightCommand')) -Name 'Device list uses inset arrow-free scrollbars in both orientations'
+Assert-True -Condition ($mainSource.Contains('$DeviceGrid.Add_PreviewMouseWheel') -and $mainSource.Contains('$DeviceGrid.RowHeight * 0.75') -and $mainSource.Contains('ScrollToVerticalOffset($targetOffset)') -and $windowMarkup.Contains('VirtualizingPanel.ScrollUnit="Pixel"')) -Name 'Device wheel input uses a bounded sub-row pixel increment while retaining virtualization'
+Assert-True -Condition ($windowMarkup.Contains('x:Key="RecoveryKeyPicker"') -and $windowMarkup.Contains('x:Key="RecoveryKeyPickerItem"') -and $windowMarkup.Contains('x:Name="RecoveryKeyDropDownSurface"') -and $windowMarkup.Contains('x:Name="RecoveryKeyPickerChevron"') -and $windowMarkup.Contains('x:Name="RecoveryKeyScrollThumb"') -and $windowMarkup.Contains('Style="{StaticResource RecoveryKeyPicker}"') -and -not $windowMarkup.Contains('DisplayMemberPath="SelectorDisplay"')) -Name 'BitLocker recovery selector uses the dedicated modern picker instead of native Windows chrome'
+Assert-True -Condition ($windowMarkup.Contains('Text="{Binding VolumeDisplay}"') -and $windowMarkup.Contains('<Run Text="Backed up "/><Run Text="{Binding CreatedDisplay}"/>')) -Name 'Recovery-key choices align volume and backup date as a readable two-line record'
+Assert-True -Condition ($windowMarkup.Contains('x:Name="DetailDeviceName"') -and -not $windowMarkup.Contains('Text="&#xE770;"')) -Name 'Device detail header does not imply an unavailable chassis type'
+Assert-True -Condition ($windowMarkup.Contains('x:Name="OpenIntuneButton"') -and $windowMarkup.Contains('x:Name="OpenEntraButton"') -and $mainSource.Contains('Open-SelectedDevicePortal -Portal Intune') -and $mainSource.Contains('Open-SelectedDevicePortal -Portal Entra')) -Name 'Device detail panel exposes both validated admin-center deep links'
 Assert-True -Condition ($mainSource.Contains("`$windowsHelloPath = Join-Path `$appRoot 'WindowsHelloVerifier.cs'") -and $mainSource.Contains('[M365Workbench.Security.WindowsHelloVerifier]::VerifyAsync(')) -Name 'Recovery actions use the dependency-free Windows user-verification helper'
 $credentialActionMatch = [regex]::Match($mainSource, '(?s)function Invoke-CredentialAction \{(?<body>.*?)\r?\n\}\r?\n\r?\nfunction Complete-BitLockerAction')
 $bitLockerActionMatch = [regex]::Match($mainSource, '(?s)function Invoke-BitLockerAction \{(?<body>.*?)\r?\n\}\r?\n\r?\nfunction Get-OperationResultObject')
@@ -447,14 +451,14 @@ Assert-True -Condition ($mainSource.Contains('$script:AuthenticationVerification
 Assert-True -Condition ($mainSource.Contains('$result.Password = $null') -and $mainSource.Contains('$result.RecoveryKey = $null') -and $mainSource.Contains('Verification expired or the Windows session changed.')) -Name 'Recovery payloads are zeroed if verification expires or Windows changes before Graph returns'
 Assert-True -Condition ($mainSource.Contains('$failedRecoveryAction = $script:PendingCredentialAction') -and $mainSource.Contains('$failedRecoveryAction = $script:PendingBitLockerAction') -and $mainSource.Contains('Set-RecoveryActionFocus -Kind $failedRecoveryKind -Action ([string]$failedRecoveryAction)')) -Name 'Failed recovery reads restore keyboard focus to the initiating action'
 Assert-True -Condition ($settingsExampleSource.Contains("SecretVerificationMode    = 'Preferred'") -and $settingsExampleSource.Contains('SecretVerificationSeconds = 600')) -Name 'Public settings default to preferred verification with a ten-minute fixed window'
-Assert-True -Condition ($mainSource.Contains('x:Name="CancelVerificationButton"') -and $mainSource.Contains('$CancelVerificationButton.Add_Click({ Stop-SecretVerification })')) -Name 'Microsoft verification can be canceled without starting a recovery read'
-Assert-True -Condition ($mainSource.Contains('KeyboardNavigation.TabNavigation="Cycle"') -and $mainSource.Contains('KeyboardNavigation.DirectionalNavigation="Cycle"') -and $mainSource.Contains('AutomationProperties.LiveSetting="Polite"') -and $mainSource.Contains("`$AuthOverlay.Visibility -eq 'Visible'")) -Name 'Verification overlay traps keyboard navigation, announces status, and suppresses background shortcuts'
+Assert-True -Condition ($windowMarkup.Contains('x:Name="CancelVerificationButton"') -and $mainSource.Contains('$CancelVerificationButton.Add_Click({ Stop-SecretVerification })')) -Name 'Microsoft verification can be canceled without starting a recovery read'
+Assert-True -Condition ($windowMarkup.Contains('KeyboardNavigation.TabNavigation="Cycle"') -and $windowMarkup.Contains('KeyboardNavigation.DirectionalNavigation="Cycle"') -and $windowMarkup.Contains('AutomationProperties.LiveSetting="Polite"') -and $mainSource.Contains("`$AuthOverlay.Visibility -eq 'Visible'")) -Name 'Verification overlay traps keyboard navigation, announces status, and suppresses background shortcuts'
 Assert-True -Condition ($mainSource.Contains("if (`$operationName -eq 'MicrosoftVerification') {") -and $mainSource.Contains('[M365Workbench.Security.SecureClipboard]::ClearIfUnchanged()') -and $mainSource.Contains('$script:LastDeviceCode = $null')) -Name 'Device codes are cleared from the protected clipboard on terminal verification paths'
 $shortcutInstallerSource = [IO.File]::ReadAllText($shortcutInstallerPath)
 Assert-True -Condition ($shortcutInstallerSource.Contains('Intune Device Workbench.lnk') -and $shortcutInstallerSource.Contains('$shortcut.IconLocation = "$launcherPath,0"')) -Name 'Desktop shortcut uses the Intune Device Workbench name and embedded launcher icon'
 Assert-True -Condition ($shortcutInstallerSource.Contains("`$appUserModelId = '$expectedAppUserModelId'") -and $shortcutInstallerSource.Contains('[M365Workbench.WindowsShellIdentity]::SetShortcutAppId($shortcutPath, $appUserModelId)')) -Name 'Desktop shortcut and running app share one Windows shell identity'
 Assert-True -Condition ($shortcutInstallerSource.Contains('M365Workbench.Launcher.exe') -and -not $shortcutInstallerSource.Contains('$shortcut.TargetPath = $powerShellAlias')) -Name 'Desktop shortcut starts through the no-console GUI launcher'
-Assert-True -Condition (-not $mainSource.Contains('Reachability') -and -not $mainSource.Contains('Header="Online"')) -Name 'Application does not infer device online status outside Intune and Entra data'
+Assert-True -Condition (-not $mainSource.Contains('Reachability') -and -not $windowMarkup.Contains('Header="Online"')) -Name 'Application does not infer device online status outside Intune and Entra data'
 Assert-True -Condition ($mainSource.Contains("'BitlockerKey.ReadBasic.All'") -and $mainSource.Contains("'BitlockerKey.Read.All'")) -Name 'BitLocker metadata and key-read scopes are requested together'
 $inventoryScriptMatch = [regex]::Match($mainSource, "(?s)\`$inventoryOperationScript = @'\r?\n(?<body>.*?)\r?\n'@")
 Assert-True -Condition ($inventoryScriptMatch.Success -and $inventoryScriptMatch.Groups['body'].Value -match 'informationProtection/bitlocker/recoveryKeys') -Name 'Inventory includes BitLocker metadata'
@@ -535,17 +539,9 @@ Assert-True -Condition $tableCornerIsClean -Name 'Rounded device table does not 
 $authVisualPreviewOutput = & $powerShellExecutable -NoLogo -NoProfile -NonInteractive -STA -File $mainScriptPath -DemoMode -RenderPreviewPath $authVisualPreviewTestPath -RenderPreviewState MicrosoftVerification 2>&1
 $authVisualPreviewExitCode = $LASTEXITCODE
 Assert-True -Condition ($authVisualPreviewExitCode -eq 0 -and (Test-Path -LiteralPath $authVisualPreviewTestPath -PathType Leaf)) -Name 'Microsoft verification overlay renders in the offline visual suite'
-$xamlMatch = [regex]::Match($mainSource, "(?s)\`$xaml = @'\r?\n(?<xaml>.*?)\r?\n'@")
-Assert-True -Condition $xamlMatch.Success -Name 'Embedded WPF markup is discoverable for validation'
-$xamlIsValidXml = $false
-if ($xamlMatch.Success) {
-    try {
-        $null = [xml]$xamlMatch.Groups['xaml'].Value
-        $xamlIsValidXml = $true
-    }
-    catch { }
-}
-Assert-True -Condition $xamlIsValidXml -Name 'Embedded WPF markup is well-formed XML'
+$markup = [xml]$windowMarkup
+Assert-Equal -Actual $markup.DocumentElement.LocalName -Expected 'Window' -Name 'The application layout is a standalone WPF window'
+Assert-True -Condition ($markup.DocumentElement.Title.StartsWith('Intune Device Workbench') -and $mainSource.Contains('WorkbenchWindow.xaml')) -Name 'Workbench loads the named window layout used by the visual tests'
 
 $initialState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($initialState)

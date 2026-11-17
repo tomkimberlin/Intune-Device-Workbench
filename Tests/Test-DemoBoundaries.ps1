@@ -6,10 +6,7 @@
         $node=$mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
         if ($null -ne $node) { . ([scriptblock]::Create($node.Extent.Text)) }
     }
-    $xamlNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true)
-    $reader=[Xml.XmlNodeReader]::new([xml]$xamlNode.Right.Expression.Value)
-    $window=[Windows.Markup.XamlReader]::Load($reader)
-    $reader.Close()
+    $window=[Windows.Markup.XamlReader]::Parse($windowMarkup)
     $namesNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$controlNames'},$true)
     . ([scriptblock]::Create($namesNode.Extent.Text))
     foreach ($name in $controlNames) { Set-Variable -Name $name -Value $window.FindName($name) }

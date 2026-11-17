@@ -26,6 +26,8 @@ The current entry points are `IntuneDeviceWorkbench.ps1`, `Launch-IntuneDeviceWo
 
 Use the [Windows smoke-test checklist](docs/WINDOWS-SMOKE-TEST.md) for interactive validation and remaining native limits.
 
+Edit `assets/WorkbenchWindow.xaml` for window layout changes. Workbench and the offline rendering and accessibility tests load this same file.
+
 ## Pull requests
 
 - Keep changes focused and explain the operator workflow they improve.
