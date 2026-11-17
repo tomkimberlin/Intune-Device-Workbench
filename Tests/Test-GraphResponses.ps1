@@ -3,15 +3,15 @@
 & {
     function Invoke-GraphResponseFixture {
         param([string]$OperationName, [string]$Scenario, [int]$StatusCode = 0)
-        $operation = Get-OperationFixture $OperationName
+        $operation = Join-Path $productionOperations "$OperationName.ps1"
         $worker = [PowerShell]::Create()
         try {
             $null = $worker.AddScript({
-                param($OperationText, $ModulePath, $Scenario, $StatusCode)
-                $script:Calls = [Collections.Generic.List[string]]::new()
+                param($OperationPath, $ModulePath, $Scenario, $StatusCode)
+                $recordedRequests = [Collections.Generic.List[string]]::new()
                 function Invoke-MgGraphRequest {
                     param($Method, $Uri, $OutputType, $ErrorAction, $Body, $ContentType)
-                    $script:Calls.Add([string]$Uri)
+                    $recordedRequests.Add([string]$Uri)
                     if ($Scenario -eq 'HttpError') {
                         # Invoke-MgGraphRequest exposes Response.StatusCode, not
                         # the ResponseStatusCode property used by generated cmdlets.
@@ -49,10 +49,10 @@
                             default { throw 'Unexpected fixture request' }
                         }
                     }
-                    if ($Scenario -eq 'MalformedLastCollection' -and $script:Calls.Count -eq 4) {
+                    if ($Scenario -eq 'MalformedLastCollection' -and $recordedRequests.Count -eq 4) {
                         return [pscustomobject]@{ unexpected='not a collection' }
                     }
-                    if ($script:Calls.Count -eq 1) {
+                    if ($recordedRequests.Count -eq 1) {
                         switch ($Scenario) {
                             'MissingValue' { return [pscustomobject]@{ '@odata.context'='synthetic' } }
                             'NullValue' { return [pscustomobject]@{ value=$null } }
@@ -69,21 +69,21 @@
                             'EmptyPageWithNext' { return [pscustomobject]@{ value=@(); '@odata.nextLink'='https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$skiptoken=A%2BB%3D%3D' } }
                         }
                     }
-                    if ($Scenario -eq 'EmptyPageWithNext' -and $script:Calls.Count -eq 2) {
+                    if ($Scenario -eq 'EmptyPageWithNext' -and $recordedRequests.Count -eq 2) {
                         return [pscustomobject]@{ value=@([pscustomobject]@{
                             id='11111111-1111-4111-8111-111111111111'; deviceName='DEMO-DEVICE-PAGED'; operatingSystem='macOS'
                         }) }
                     }
                     return [pscustomobject]@{ value=@() }
                 }
-                [object[]]$arguments = switch ($OperationText) {
-                    { $_ -match '^param\(\$DeviceId, \$RecoveryKeyId' } { @('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', $ModulePath); break }
-                    { $_ -match '^param\(\$DeviceId,' } { @('11111111-1111-4111-8111-111111111111', $ModulePath); break }
-                    default { @($ModulePath) }
+                [object[]]$arguments = switch ([IO.Path]::GetFileNameWithoutExtension($OperationPath)) {
+                    'BitLockerKey' { @('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', $ModulePath) }
+                    'Credential' { @('11111111-1111-4111-8111-111111111111', $ModulePath) }
+                    'Inventory' { @($ModulePath) }
                 }
-                $results = @(& ([scriptblock]::Create($OperationText)) @arguments)
-                [pscustomobject]@{ Results=$results; Calls=$script:Calls.ToArray() }
-            }).AddArgument($operation.ToString()).AddArgument($modulePath).AddArgument($Scenario).AddArgument($StatusCode)
+                $results = @(& $OperationPath @arguments)
+                [pscustomobject]@{ Results=$results; Calls=$recordedRequests.ToArray() }
+            }).AddArgument($operation).AddArgument($modulePath).AddArgument($Scenario).AddArgument($StatusCode)
             $output = @($worker.Invoke())
             if ($worker.HadErrors) { throw 'Graph-response fixture failed outside the operation result path.' }
             return $output[0]
@@ -92,25 +92,25 @@
     }
 
     foreach ($scenario in @('MissingValue', 'NullValue', 'StringValue', 'ObjectValue', 'NullRecord', 'StringRecord', 'MissingRecordId', 'InvalidRecordId', 'BlankNextLink', 'ArrayNextLink', 'OtherCollection', 'RecoveryRecord')) {
-        $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' $scenario
+        $fixture = Invoke-GraphResponseFixture 'Inventory' $scenario
         Assert-True -Condition ($fixture.Results.Count -eq 1 -and $fixture.Results[0].Kind -eq 'Error' -and $fixture.Calls.Count -eq 1) -Name "Inventory rejects $scenario without following another request or publishing incomplete data"
     }
-    $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' 'EmptyPageWithNext'
+    $fixture = Invoke-GraphResponseFixture 'Inventory' 'EmptyPageWithNext'
     Assert-True -Condition ($fixture.Results.Count -eq 1 -and $fixture.Results[0].Kind -eq 'InventoryResult' -and $fixture.Calls.Count -eq 5 -and $fixture.Calls[1] -ceq 'https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$skiptoken=A%2BB%3D%3D') -Name 'An empty inventory page still follows the complete opaque nextLink unchanged'
-    $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' 'MalformedLastCollection'
+    $fixture = Invoke-GraphResponseFixture 'Inventory' 'MalformedLastCollection'
     Assert-True -Condition ($fixture.Results.Count -eq 1 -and $fixture.Results[0].Kind -eq 'Error' -and $fixture.Results[0].Stage -eq 'Entra device inventory' -and $fixture.Calls.Count -eq 4) -Name 'A malformed final collection cannot publish the earlier inventory collections'
-    $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' 'ValidInventory'
+    $fixture = Invoke-GraphResponseFixture 'Inventory' 'ValidInventory'
     $rows = @($fixture.Results[0].Devices)
     Assert-True -Condition ($fixture.Results.Count -eq 1 -and $fixture.Results[0].Kind -eq 'InventoryResult' -and $fixture.Calls.Count -eq 5 -and $rows.Count -eq 1 -and $rows[0].PrimaryUser -eq 'Demo User' -and $rows[0].LapsAvailable -and $rows[0].BitLockerKeyCount -eq 1) -Name 'Valid JSON collections still merge one device with its actual primary user and recovery metadata'
 
-    $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' 'Reenrollment'
+    $fixture = Invoke-GraphResponseFixture 'Inventory' 'Reenrollment'
     $result = $fixture.Results[0]
     Assert-True -Condition ($result.Kind -eq 'InventoryResult' -and $result.Devices.Count -eq 1 -and
         $result.Devices[0].EntraDeviceId -eq '33333333-3333-4333-8333-333333333333' -and
         $result.Devices[0].PrimaryUser -eq 'Demo User' -and $result.Devices[0].LapsAvailable -and
         $result.Devices[0].BitLockerKeyCount -eq 1 -and $fixture.Calls.Count -eq 5) -Name '41 enrollments with equivalent GUIDs produce one primary-user lookup and one joined recovery row'
 
-    foreach ($operationName in @('inventoryOperationScript', 'credentialOperationScript', 'bitLockerKeyOperationScript')) {
+    foreach ($operationName in @('Inventory', 'Credential', 'BitLockerKey')) {
         foreach ($status in @(401, 403, 404, 429, 503)) {
             $fixture = Invoke-GraphResponseFixture $operationName 'HttpError' $status
             Assert-True -Condition ($fixture.Results.Count -eq 1 -and $fixture.Results[0].Kind -eq 'Error' -and $fixture.Results[0].StatusCode -eq $status -and $fixture.Calls.Count -eq 1) -Name "$operationName preserves the SDK HTTP $status status for UI recovery"

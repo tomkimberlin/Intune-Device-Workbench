@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $appRoot = Split-Path -Parent $PSScriptRoot
 $modulePath = Join-Path $appRoot 'M365Workbench.Core.psm1'
+$productionOperations = Join-Path $appRoot 'Operations'
 $clipboardPath = Join-Path $appRoot 'SecureClipboard.cs'
 $windowsHelloPath = Join-Path $appRoot 'WindowsHelloVerifier.cs'
 $mainScriptPath = Join-Path $appRoot 'IntuneDeviceWorkbench.ps1'
@@ -98,6 +99,12 @@ $credentials = @(
     [pscustomobject]@{ accountName = 'LapsAdmin'; backupDateTime = '2026-08-24T10:00:00Z'; passwordBase64 = 'new' }
 )
 Assert-Equal -Actual (Select-CurrentLapsCredential -Credentials $credentials).accountName -Expected 'LapsAdmin' -Name 'Newest credential is selected independently of array order'
+$undated = [pscustomobject]@{ accountName = 'Undated'; passwordBase64 = 'fixture' }
+$tied = [pscustomobject]@{ accountName = 'Tie'; backupDateTime = $credentials[1].backupDateTime; passwordBase64 = 'fixture' }
+$emptyPassword = [pscustomobject]@{ backupDateTime = '2026-10-01T00:00:00Z'; passwordBase64 = ' ' }
+Assert-Equal -Actual (Select-CurrentLapsCredential @($undated, $credentials[1], $tied, $emptyPassword)).accountName -Expected 'LapsAdmin' -Name 'LAPS selects the first newest usable credential and skips blank passwords'
+Assert-Equal -Actual (Select-CurrentLapsCredential @($null, $undated)).accountName -Expected 'Undated' -Name 'An undated credential remains usable when it is the only one'
+Assert-True -Condition ($null -eq (Select-CurrentLapsCredential @($null, $emptyPassword))) -Name 'A response without a usable credential returns no selection'
 
 $message = 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code A1B2C3D4E to authenticate.'
 $deviceCode = Get-DeviceCodeFromMessage -Message $message
@@ -316,9 +323,11 @@ $CopyDeviceDetailsButton = [pscustomobject]@{IsEnabled=$false}
 . (Join-Path $PSScriptRoot 'Test-Connection.ps1')
 . (Join-Path $PSScriptRoot 'Test-InventoryRefresh.ps1')
 . (Join-Path $PSScriptRoot 'Test-SecurityBoundaries.ps1')
+. (Join-Path $PSScriptRoot 'Test-Reveal.ps1')
 . (Join-Path $PSScriptRoot 'Test-DemoBoundaries.ps1')
 . (Join-Path $PSScriptRoot 'Test-GraphResponses.ps1')
 . (Join-Path $PSScriptRoot 'Test-Authentication.ps1')
+. (Join-Path $PSScriptRoot 'Test-VerificationWindow.ps1')
 . (Join-Path $PSScriptRoot 'Test-Accessibility.ps1')
 . (Join-Path $PSScriptRoot 'Test-PrimaryUsers.ps1')
 . (Join-Path $PSScriptRoot 'Test-Scrolling.ps1')
@@ -363,32 +372,11 @@ $bitLockerGateIndex = if ($bitLockerActionMatch.Success) { $bitLockerActionMatch
 $bitLockerCacheIndex = if ($bitLockerActionMatch.Success) { $bitLockerActionMatch.Groups['body'].Value.IndexOf('$script:CurrentBitLockerKey') } else { -1 }
 Assert-True -Condition ($credentialGateIndex -ge 0 -and $credentialGateIndex -lt $credentialCacheIndex) -Name 'LAPS verification gate runs before cached password reuse or Graph retrieval'
 Assert-True -Condition ($bitLockerGateIndex -ge 0 -and $bitLockerGateIndex -lt $bitLockerCacheIndex) -Name 'BitLocker verification gate runs before cached key reuse or Graph retrieval'
-$microsoftVerificationMatch = [regex]::Match($mainSource, "(?s)\`$microsoftVerificationOperationScript = @'\r?\n(?<body>.*?)\r?\n'@")
-$microsoftVerificationBody = if ($microsoftVerificationMatch.Success) { $microsoftVerificationMatch.Groups['body'].Value } else { '' }
-$microsoftVerificationChildMatch = [regex]::Match($mainSource, "(?s)\`$microsoftVerificationChildScript = @'\r?\n(?<body>.*?)\r?\n'@")
-$microsoftVerificationChildBody = if ($microsoftVerificationChildMatch.Success) { $microsoftVerificationChildMatch.Groups['body'].Value } else { '' }
-Assert-True -Condition ($microsoftVerificationBody.Contains('CreateNoWindow = $true') -and $microsoftVerificationBody.Contains('$deviceCodeObserved') -and $microsoftVerificationBody.Contains("Kind = 'MicrosoftVerificationResult'")) -Name 'Microsoft fallback is hidden, isolated, and accepted only after a fresh device code is observed'
-Assert-True -Condition ($microsoftVerificationChildBody.Contains('-ContextScope Process') -and $microsoftVerificationChildBody.Contains('Test-LapsGraphContext') -and -not $microsoftVerificationChildBody.Contains('Disconnect-MgGraph')) -Name 'Microsoft fallback cannot replace or clear the reusable CurrentUser Graph session'
+$verificationHarness = Join-Path $productionOperations 'MicrosoftVerification.ps1'
+$microsoftVerificationBody = [IO.File]::ReadAllText($verificationHarness)
+$testVerifier = Join-Path $PSScriptRoot 'Fixtures/Verify Microsoft account.ps1'
+Assert-True -Condition ($microsoftVerificationBody.Contains('CreateNoWindow = $true')) -Name 'The isolated verification process does not open a second window'
 
-$verificationHarness = [scriptblock]::Create($microsoftVerificationBody)
-$fakeInteractiveVerifier = @'
-$configJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:M365WB_VERIFY_CONFIG))
-$config = $configJson | ConvertFrom-Json
-[Console]::Out.WriteLine('To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code Z9Y8X7W6V to authenticate.')
-$payloadJson = [pscustomobject]@{ Status = 'Verified'; ErrorCode = '' } | ConvertTo-Json -Compress
-$payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
-[Console]::Out.WriteLine("M365WB_VERIFY_RESULT::$($config.Nonce)::$payload")
-exit 0
-'@
-$fakeSilentVerifier = @'
-$configJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:M365WB_VERIFY_CONFIG))
-$config = $configJson | ConvertFrom-Json
-$payloadJson = [pscustomobject]@{ Status = 'Verified'; ErrorCode = '' } | ConvertTo-Json -Compress
-$payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
-[Console]::Out.WriteLine("M365WB_VERIFY_RESULT::$($config.Nonce)::$payload")
-exit 0
-'@
-$fakeBlockingVerifier = 'Start-Sleep -Seconds 30'
 $verificationPowerShell = Join-Path $PSHOME 'pwsh.exe'
 $verificationHarnessArguments = @(
     'contoso.onmicrosoft.com',
@@ -400,43 +388,30 @@ $verificationHarnessArguments = @(
     $verificationPowerShell
 )
 
-$interactiveCancelEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
+$verificationSignal = [Threading.ManualResetEvent]::new($false)
 try {
-    $interactiveNonce = [Guid]::NewGuid().ToString('N')
-    $interactiveOutput = @(& $verificationHarness @verificationHarnessArguments $interactiveNonce $fakeInteractiveVerifier $interactiveCancelEvent 10)
-    $interactiveResult = $interactiveOutput | Where-Object { $null -ne $_.PSObject.Properties['Kind'] } | Select-Object -Last 1
-    Assert-Equal -Actual ([string]$interactiveResult.Kind) -Expected 'MicrosoftVerificationResult' -Name 'Isolated Microsoft verifier accepts a nonce-bound success only after observing a fresh code'
-    Assert-True -Condition ($null -ne ($interactiveOutput | Where-Object { (Get-DeviceCodeFromMessage -Message $_) } | Select-Object -First 1)) -Name 'Isolated verifier streams the fresh device code to the existing sign-in UI'
+    $nonce = [Guid]::NewGuid().ToString('N')
+    $result = @(& $verificationHarness @verificationHarnessArguments $nonce $testVerifier $verificationSignal 10)
+    Assert-Equal -Actual $result[-1].Kind -Expected 'MicrosoftVerificationResult' -Name 'A fresh code and the configured delegated identity grant verification in the isolated process'
+    Assert-True -Condition ($result.Count -eq 2 -and (Get-DeviceCodeFromMessage $result[0]).UserCode -eq 'Z9Y8X7W6V' -and $result[0] -notlike '*Synthetic SDK detail*') -Name 'Isolated verification forwards only the fresh sign-in prompt to the window'
+    $result = @(& $verificationHarness @verificationHarnessArguments 'silent' $testVerifier $verificationSignal 10)
+    Assert-Equal -Actual $result[-1].ErrorCode -Expected 'InteractiveVerificationNotObserved' -Name 'A silent child-process token result cannot satisfy user verification'
+    $result = @(& $verificationHarness @verificationHarnessArguments 'wrong-account' $testVerifier $verificationSignal 10)
+    Assert-Equal -Actual $result[-1].ErrorCode -Expected 'WrongAccount' -Name 'The isolated verification process rejects another account even after showing a fresh code'
+    $missingExecutable = @($verificationHarnessArguments)
+    $missingExecutable[-1] = Join-Path $testRoot 'missing-powershell.exe'
+    $result = @(& $verificationHarness @missingExecutable 'missing-process' $testVerifier $verificationSignal 5)
+    Assert-True -Condition ($result.Count -eq 1 -and $result[0].ErrorCode -eq 'MicrosoftVerificationFailed') -Name 'A process launch failure produces one safe verification error'
+    $result = @(& $verificationHarness @verificationHarnessArguments 'wrong-nonce' $testVerifier $verificationSignal 5)
+    Assert-True -Condition ($result[-1].Kind -eq 'VerificationError') -Name 'A real prompt and success from a different verification request cannot grant access'
+    $result = @(& $verificationHarness @verificationHarnessArguments 'closed-output' $testVerifier $verificationSignal 2)
+    Assert-True -Condition ($result[-1].ErrorCode -eq 'VerificationTimedOut') -Name 'A child that stops reporting output remains subject to the verification timeout'
+    $null = $verificationSignal.Set()
+    $result = @(& $verificationHarness @verificationHarnessArguments 'block' $testVerifier $verificationSignal 10)
+    Assert-Equal -Actual $result[-1].Kind -Expected 'VerificationCanceled' -Name 'Canceling Microsoft verification terminates the isolated child and fails closed'
 }
-finally {
-    $interactiveCancelEvent.Dispose()
-}
+finally { $verificationSignal.Dispose() }
 
-$silentCancelEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
-try {
-    $silentNonce = [Guid]::NewGuid().ToString('N')
-    $silentOutput = @(& $verificationHarness @verificationHarnessArguments $silentNonce $fakeSilentVerifier $silentCancelEvent 10)
-    $silentResult = $silentOutput | Where-Object { $null -ne $_.PSObject.Properties['Kind'] } | Select-Object -Last 1
-    Assert-Equal -Actual ([string]$silentResult.ErrorCode) -Expected 'InteractiveVerificationNotObserved' -Name 'A silent child-process token result cannot satisfy user verification'
-}
-finally {
-    $silentCancelEvent.Dispose()
-}
-
-$cancelEvent = [Threading.EventWaitHandle]::new($true, [Threading.EventResetMode]::ManualReset)
-try {
-    $cancelNonce = [Guid]::NewGuid().ToString('N')
-    $cancelOutput = @(& $verificationHarness @verificationHarnessArguments $cancelNonce $fakeBlockingVerifier $cancelEvent 10)
-    $cancelResult = $cancelOutput | Where-Object { $null -ne $_.PSObject.Properties['Kind'] } | Select-Object -Last 1
-    Assert-Equal -Actual ([string]$cancelResult.Kind) -Expected 'VerificationCanceled' -Name 'Canceling Microsoft verification terminates the isolated child and fails closed'
-}
-finally {
-    $cancelEvent.Dispose()
-}
-
-Assert-True -Condition ($mainSource.Contains('$script:SecretVerifiedUntil = [DateTimeOffset]::Now.AddSeconds($secretVerificationSeconds)') -and $mainSource.Contains('[System.Windows.Interop.HwndSourceHook]') -and $mainSource.Contains('@(2, 4, 6, 7)')) -Name 'Secret verification uses a fixed process-memory window revoked by UI-thread Windows session messages'
-Assert-True -Condition ($mainSource.Contains('$script:SecretVerifiedDeadlineTimestamp') -and $mainSource.Contains('[Diagnostics.Stopwatch]::GetTimestamp() -lt $script:SecretVerifiedDeadlineTimestamp') -and $mainSource.Contains('$script:SecretVerifiedDeadlineTimestamp = [int64]0')) -Name 'Verification expiry uses a monotonic deadline that system-clock changes cannot extend'
-Assert-True -Condition ($mainSource.Contains('$script:RecentInteractiveAuthenticationUntil = [DateTimeOffset]::Now.AddSeconds($secretVerificationSeconds)') -and $mainSource.Contains('$script:SecretVerifiedUntil = $script:RecentInteractiveAuthenticationUntil')) -Name 'Recent startup sign-in can satisfy only the unexpired remainder of the same fixed verification window'
 Assert-True -Condition ($mainSource.Contains('$script:PendingCredentialVerificationGeneration = [int]$VerificationGeneration') -and $mainSource.Contains('$script:PendingBitLockerVerificationGeneration = [int]$VerificationGeneration') -and $mainSource.Contains('Invoke-CredentialAction -Action $action -VerificationGranted -VerificationGeneration $verificationGeneration') -and $mainSource.Contains('Invoke-BitLockerAction -Action $action -VerificationGranted -VerificationGeneration $verificationGeneration') -and $mainSource.Contains('Test-SecretVerificationGeneration -Generation $verificationGeneration')) -Name 'In-flight LAPS and BitLocker reads remain bound to the verification generation that started them'
 $grantCalls = @($mainAst.FindAll({
     param($node)
@@ -448,7 +423,6 @@ $unboundGrantCalls = @($grantCalls | Where-Object {
     }).Count -eq 0
 })
 Assert-True -Condition ($grantCalls.Count -gt 0 -and $unboundGrantCalls.Count -eq 0) -Name 'Every verification grant is atomically bound to the generation that initiated it'
-Assert-True -Condition ($mainSource.Contains('$script:AuthenticationVerificationGeneration = [int]$authenticationSnapshot.Generation') -and $mainSource.Contains('Set-RecentInteractiveAuthentication -ExpectedGeneration ([int]$script:AuthenticationVerificationGeneration)') -and $mainSource.Contains('Use-RecentInteractiveAuthentication -ExpectedGeneration $expectedGeneration')) -Name 'Startup authentication cannot grant recovery access after a Windows session change'
 Assert-True -Condition ($mainSource.Contains('$result.Password = $null') -and $mainSource.Contains('$result.RecoveryKey = $null') -and $mainSource.Contains('Verification expired or the Windows session changed.')) -Name 'Recovery payloads are zeroed if verification expires or Windows changes before Graph returns'
 Assert-True -Condition ($mainSource.Contains('$failedRecoveryAction = $script:PendingCredentialAction') -and $mainSource.Contains('$failedRecoveryAction = $script:PendingBitLockerAction') -and $mainSource.Contains('Set-RecoveryActionFocus -Kind $failedRecoveryKind -Action ([string]$failedRecoveryAction)')) -Name 'Failed recovery reads restore keyboard focus to the initiating action'
 Assert-True -Condition ($settingsExampleSource.Contains("SecretVerificationMode    = 'Preferred'") -and $settingsExampleSource.Contains('SecretVerificationSeconds = 600')) -Name 'Public settings default to preferred verification with a ten-minute fixed window'
@@ -461,11 +435,11 @@ Assert-True -Condition ($shortcutInstallerSource.Contains("`$appUserModelId = '$
 Assert-True -Condition ($shortcutInstallerSource.Contains('M365Workbench.Launcher.exe') -and -not $shortcutInstallerSource.Contains('$shortcut.TargetPath = $powerShellAlias')) -Name 'Desktop shortcut starts through the no-console GUI launcher'
 Assert-True -Condition (-not $mainSource.Contains('Reachability') -and -not $windowMarkup.Contains('Header="Online"')) -Name 'Application does not infer device online status outside Intune and Entra data'
 Assert-True -Condition ($mainSource.Contains("'BitlockerKey.ReadBasic.All'") -and $mainSource.Contains("'BitlockerKey.Read.All'")) -Name 'BitLocker metadata and key-read scopes are requested together'
-$inventoryScriptMatch = [regex]::Match($mainSource, "(?s)\`$inventoryOperationScript = @'\r?\n(?<body>.*?)\r?\n'@")
-Assert-True -Condition ($inventoryScriptMatch.Success -and $inventoryScriptMatch.Groups['body'].Value -match 'informationProtection/bitlocker/recoveryKeys') -Name 'Inventory includes BitLocker metadata'
-Assert-True -Condition ($inventoryScriptMatch.Success -and $inventoryScriptMatch.Groups['body'].Value -notmatch '(?i)\$select\s*=.*\bkey\b|\$select=[^\r\n\"]*\bkey\b') -Name 'Inventory never requests BitLocker recovery-key secrets'
-$keyScriptMatch = [regex]::Match($mainSource, "(?s)\`$bitLockerKeyOperationScript = @'\r?\n(?<body>.*?)\r?\n'@")
-Assert-True -Condition ($keyScriptMatch.Success -and $keyScriptMatch.Groups['body'].Value -match '\$select=id,key,deviceId') -Name 'BitLocker secret is requested only by the explicit per-key operation'
+$inventorySource = [IO.File]::ReadAllText((Join-Path $productionOperations 'Inventory.ps1'))
+$keySource = [IO.File]::ReadAllText((Join-Path $productionOperations 'BitLockerKey.ps1'))
+Assert-True -Condition ($inventorySource.Contains('informationProtection/bitlocker/recoveryKeys')) -Name 'Inventory includes BitLocker metadata'
+Assert-True -Condition ($inventorySource -notmatch '(?i)\$select=[^\r\n"]*\bkey\b') -Name 'Inventory never requests BitLocker recovery-key secrets'
+Assert-True -Condition ($keySource -match '\$select=id,key,deviceId') -Name 'BitLocker secret is requested only by the explicit per-key operation'
 $visualPreviewOutput = & $powerShellExecutable -NoLogo -NoProfile -NonInteractive -STA -File $mainScriptPath -DemoMode -RenderPreviewPath $visualPreviewTestPath 2>&1
 $visualPreviewExitCode = $LASTEXITCODE
 Assert-True -Condition ($visualPreviewExitCode -eq 0 -and (Test-Path -LiteralPath $visualPreviewTestPath -PathType Leaf)) -Name 'Off-screen demo preview renders successfully'
@@ -570,7 +544,7 @@ catch {
 }
 finally {
     try {
-        foreach ($generatedTestArtifact in @($launcherTestPath, $shortcutIdentityTestPath, $visualPreviewTestPath, $authVisualPreviewTestPath)) {
+        foreach ($generatedTestArtifact in @((Join-Path $testRoot 'Synthetic Microsoft verifier.ps1'), $launcherTestPath, $shortcutIdentityTestPath, $visualPreviewTestPath, $authVisualPreviewTestPath)) {
             [IO.File]::Delete($generatedTestArtifact)
         }
         [IO.Directory]::Delete($testRoot)

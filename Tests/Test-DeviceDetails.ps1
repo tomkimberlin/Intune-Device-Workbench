@@ -73,6 +73,7 @@
     function Process-OperationOutput { }
     function Set-AppStatus { param($Message) }
     $script:ToastExpiresAt=[DateTimeOffset]::MinValue
+$script:RevealedSecretKind = $null
     $script:CredentialExpiresAt=[DateTimeOffset]::MinValue
     $script:BitLockerExpiresAt=[DateTimeOffset]::MinValue
     $PasswordText=[pscustomobject]@{Text='••••••••••••••••'}

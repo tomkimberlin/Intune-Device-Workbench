@@ -39,7 +39,7 @@ All screenshots, tests, and demo records use fictional `contoso` identities and 
 - `Microsoft.Graph.Authentication` 2.38.0 or later
 - A Microsoft Entra work or school account in the configured tenant
 
-Both the standard PowerShell installer and Microsoft Store installation are supported. The launcher also checks absolute directories on `PATH`. The window title identifies the current build as `2026.11.17`.
+Both the standard PowerShell installer and Microsoft Store installation are supported. The launcher also checks absolute directories on `PATH`. The window title identifies the current build as `2026.11.17.1`.
 
 ## Quick start
 
@@ -128,7 +128,7 @@ Intune Device Workbench handles privileged recovery material, so its recovery fl
 - Local verification is revoked when its fixed timer expires, when Windows locks or disconnects the session, and when the app closes.
 - The Microsoft fallback runs in a separate process-scoped Graph session, validates the configured tenant and account, requires a newly observed device code, and returns no token to the app.
 - Secrets are not intentionally written to files, logs, or PowerShell history.
-- Revealed secrets hide automatically, and copied secrets are cleared only if the clipboard still contains the value written by this app.
+- Revealed secrets hide automatically. Copying a visible password or recovery key starts its clipboard timer and keeps the original time limit for the screen. Workbench clears the clipboard only if it still contains the value the app copied.
 - Reveal and clipboard deadlines use elapsed time, so changing the Windows clock cannot extend them. Busy clipboard cleanup retries; normal closing waits for pending cleanup rather than silently abandoning it.
 - Intune and recovery records are joined by Entra device ID, not mutable device name.
 - There is no bulk secret export path.

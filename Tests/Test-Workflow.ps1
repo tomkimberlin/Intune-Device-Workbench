@@ -45,6 +45,17 @@
     function Complete-BitLockerAction { param($Action,$KeyResult) $script:WorkflowExposed++ }
     function Test-SecretVerificationGeneration { param($Generation) $null -ne $Generation }
     function Fail-SecretVerification { param($Message,[switch]$Canceled) $script:WorkflowToast=$Message; $script:PendingSecretRequest=$null }
+    $operationsPath = Join-Path $testRoot 'Workflow operations'
+    $null = [IO.Directory]::CreateDirectory($operationsPath)
+    function Set-WorkflowCommand {
+        param($Name, $ScriptText)
+        [IO.File]::WriteAllText((Join-Path $operationsPath "$Name.ps1"), $ScriptText)
+    }
+    function Start-WorkflowCommand {
+        param($Name, $ScriptText, [object[]]$Arguments = @())
+        if ($null -eq $script:CurrentOperation) { Set-WorkflowCommand $Name $ScriptText }
+        Start-GraphOperation -Name $Name -Arguments $Arguments
+    }
     function Wait-WorkflowFixture {
         $watch=[Diagnostics.Stopwatch]::StartNew()
         while ($null -ne $script:CurrentOperation -and $watch.Elapsed.TotalSeconds -lt 5) {
@@ -56,7 +67,7 @@
     try {
         # Startup failure is queued for normal UI completion; the next attempt can retry.
         function Initialize-GraphWorker { throw 'Synthetic worker startup failure' }
-        $inventoryOperationScript="[pscustomobject]@{Kind='InventoryResult';Devices=@('new inventory');LoadedAt=[DateTimeOffset]::Now}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "[pscustomobject]@{Kind='InventoryResult';Devices=@('new inventory');LoadedAt=[DateTimeOffset]::Now}"
         Start-InventoryLoad
         Assert-True -Condition ($null -ne $script:CurrentOperation -and $null -eq $script:CurrentOperation.AsyncResult) -Name 'Worker startup failure becomes a recoverable operation result instead of escaping the UI event'
         Wait-WorkflowFixture
@@ -69,7 +80,7 @@
         # BeginStop is genuinely asynchronous; no synchronous Stop on the UI thread.
         $AccountNameText.Text='DemoLapsAdmin'
         $CopyAccountButton.IsEnabled=$true
-        $inventoryOperationScript="Start-Sleep -Seconds 30; [pscustomobject]@{Kind='InventoryResult';Devices=@('must not apply');LoadedAt=[DateTimeOffset]::Now}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "Start-Sleep -Seconds 30; [pscustomobject]@{Kind='InventoryResult';Devices=@('must not apply');LoadedAt=[DateTimeOffset]::Now}"
         Start-InventoryLoad
         Assert-True -Condition ($RefreshButton.IsEnabled -and $RefreshButtonText.Text -eq 'Cancel' -and -not $CopyPasswordButton.IsEnabled -and -not $SignInButton.IsEnabled) -Name 'A running refresh exposes Cancel and prevents competing actions'
         Restore-SecretActionControls
@@ -77,7 +88,7 @@
         Assert-True -Condition ($RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled -and -not $SignInButton.IsEnabled) -Name 'Selection updates during refresh keep Cancel available without re-enabling competing actions'
         Assert-True -Condition (-not $CopyAccountButton.IsEnabled) -Name 'Pending Graph work disables username copying even when an earlier recovery populated the account'
         $inFlight=$script:CurrentOperation
-        $secondStarted=Start-GraphOperation -Name Inventory -ScriptText 'throw "must not run"'
+        $secondStarted=Start-WorkflowCommand -Name Inventory -ScriptText 'throw "must not run"'
         Assert-True -Condition (-not $secondStarted -and $script:CurrentOperation -eq $inFlight) -Name 'Only one background operation can run at a time'
         Stop-InventoryLoad
         Stop-InventoryLoad
@@ -89,7 +100,7 @@
         Restore-SecretActionControls
         Assert-True -Condition (-not $CopyAccountButton.IsEnabled) -Name 'Restoring controls never enables username copying before an account was retrieved'
 
-        $inventoryOperationScript="[pscustomobject]@{Kind='InventoryResult';Devices=@('retry inventory');LoadedAt=[DateTimeOffset]::Now}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "[pscustomobject]@{Kind='InventoryResult';Devices=@('retry inventory');LoadedAt=[DateTimeOffset]::Now}"
         Start-InventoryLoad
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 2 -and $script:AllDevices[0] -eq 'retry inventory') -Name 'The same worker successfully refreshes after asynchronous cancellation'
@@ -109,7 +120,7 @@
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 3) -Name 'Refresh recreates a broken worker on the next attempt'
 
-        $inventoryOperationScript="[pscustomobject]@{Kind='Error';ErrorCode='ServiceUnavailable';Message='synthetic';StatusCode=503}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "[pscustomobject]@{Kind='Error';ErrorCode='ServiceUnavailable';Message='synthetic';StatusCode=503}"
         Start-InventoryLoad
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 3 -and -not $script:IsSignedIn -and $script:WorkflowStatus -like '*Showing the previous inventory*' -and $RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled) -Name 'A service outage preserves inventory but removes verified connection state and disables recovery'
@@ -118,37 +129,36 @@
             $script:IsSignedIn=$true
             $script:PendingCredentialAction='Copy'
             $script:PendingBitLockerAction='Reveal'
-            $null=Start-GraphOperation -Name $operationKind -ScriptText "[pscustomobject]@{Kind='Error';ErrorCode='AuthenticationFailed';Message='Token acquisition failed: No such host is known';StatusCode=`$null}"
+            $null=Start-WorkflowCommand -Name $operationKind -ScriptText "[pscustomobject]@{Kind='Error';ErrorCode='AuthenticationFailed';Message='Token acquisition failed: No such host is known';StatusCode=`$null}"
             Wait-WorkflowFixture
             Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowAuthText -eq 'Connection unavailable' -and $SignInButton.Content -eq 'Retry connection' -and -not $CopyPasswordButton.IsEnabled -and -not $CopyRecoveryKeyButton.IsEnabled -and $RefreshButton.IsEnabled -and $script:WorkflowStatus -like 'Cannot reach Microsoft*' -and $script:AllDevices[0] -eq 'retry inventory') -Name "Network failure never appears reconnected or expired and preserves old inventory: $operationKind"
         }
         $script:IsSignedIn=$true
         $script:WorkflowSecretsHidden=$false
-        $null=Start-GraphOperation -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com'}"
+        $null=Start-WorkflowCommand -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com'}"
         Wait-WorkflowFixture
         Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowApplied -eq 3 -and $script:WorkflowStatus -like '*not verified*' -and $script:WorkflowSecretsHidden) -Name 'Cached auth metadata without connection verification hides existing secrets and cannot enable recovery or launch inventory'
 
         $script:AuthenticationDeviceCodeObserved=$false
         $script:AuthenticationVerificationGeneration=$null
-        $inventoryOperationScript="[pscustomobject]@{Kind='InventoryResult';Devices=@('online retry inventory');LoadedAt=[DateTimeOffset]::Now}"
-        $null=Start-GraphOperation -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com';ConnectionVerified=`$true}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "[pscustomobject]@{Kind='InventoryResult';Devices=@('online retry inventory');LoadedAt=[DateTimeOffset]::Now}"
+        $null=Start-WorkflowCommand -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com';ConnectionVerified=`$true}"
         Wait-WorkflowFixture
         Assert-True -Condition ($script:IsSignedIn -and $script:WorkflowAuthText -eq 'admin@contoso.com' -and $script:WorkflowApplied -eq 4 -and $script:AllDevices[0] -eq 'online retry inventory' -and $CopyPasswordButton.IsEnabled) -Name 'Verified reconnect after network recovery reloads inventory and re-enables recovery without restarting'
         $script:WorkflowApplied=3
         $script:IsSignedIn=$true
         # Run the real inventory body through the real worker/UI completion path.
         # Only the Graph transport is replaced, using its actual exception shape.
-        $inventoryNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$inventoryOperationScript'},$true)
         $coreModulePath=$modulePath
-        $inventoryOperationScript=@'
+        Set-WorkflowCommand -Name Inventory -ScriptText @'
 param($CoreModulePath)
 function Invoke-MgGraphRequest {
     $failure=[Net.Http.HttpRequestException]::new('Synthetic HTTP failure')
     $failure | Add-Member -NotePropertyName Response -NotePropertyValue ([Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::Unauthorized))
     throw $failure
 }
-& {
-'@ + $inventoryNode.Right.Expression.Value + "`n} `$CoreModulePath"
+& (Join-Path (Split-Path -LiteralPath $CoreModulePath) 'Operations\Inventory.ps1') $CoreModulePath
+'@
         $revocationsBefore=$script:WorkflowRevocations
         $clearsBefore=$script:WorkflowSecretClears
         Start-InventoryLoad
@@ -163,24 +173,24 @@ function Invoke-MgGraphRequest {
         Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowStatus -like '*sign in again*' -and
             $script:WorkflowApplied -eq 3 -and -not $CopyPasswordButton.IsEnabled) -Name 'Canceling after a Graph rejection retains inventory and revokes recovery access'
 
-        $null = Start-GraphOperation -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com';ConnectionVerified='False'}"
+        $null = Start-WorkflowCommand -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com';ConnectionVerified='False'}"
         Wait-WorkflowFixture
         Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowApplied -eq 3 -and $script:WorkflowStatus -like '*not verified*') -Name 'Only a verified boolean success can enable recovery'
         $script:IsSignedIn=$true
-        $inventoryOperationScript=@'
+        Set-WorkflowCommand -Name Inventory -ScriptText @'
 param($CoreModulePath)
 function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collection' } }
-& {
-'@ + $inventoryNode.Right.Expression.Value + "`n} `$CoreModulePath"
+& (Join-Path (Split-Path -LiteralPath $CoreModulePath) 'Operations\Inventory.ps1') $CoreModulePath
+'@
         Start-InventoryLoad
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 3 -and $script:IsSignedIn -and $script:AllDevices.Count -eq 1 -and $script:WorkflowStatus -like '*Showing the previous inventory*' -and $RefreshButton.IsEnabled) -Name 'Malformed Graph inventory preserves the displayed inventory and restores Refresh through the actual UI completion path'
         $coreModulePath='unused fixture'
-        $inventoryOperationScript="Write-Progress -Activity 'Synthetic progress' -Status 'Running'; throw 'Synthetic unhandled failure'"
+        Set-WorkflowCommand -Name Inventory -ScriptText "Write-Progress -Activity 'Synthetic progress' -Status 'Running'; throw 'Synthetic unhandled failure'"
         Start-InventoryLoad
         Wait-WorkflowFixture
         Assert-True -Condition ($script:GraphPowerShell.Streams.Error.Count -eq 0 -and $script:GraphPowerShell.Streams.Progress.Count -eq 0 -and $RefreshButton.IsEnabled) -Name 'Unhandled worker errors recover normally and release retained error/progress streams'
-        $inventoryOperationScript="[pscustomobject]@{Kind='UnexpectedResult'}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "[pscustomobject]@{Kind='UnexpectedResult'}"
         Start-InventoryLoad
         Wait-WorkflowFixture
         Assert-True -Condition ($script:WorkflowApplied -eq 3 -and $RefreshButton.IsEnabled -and $RefreshButtonText.Text -eq 'Refresh' -and $script:WorkflowStatus -like '*could not complete*') -Name 'Unexpected worker output fails closed and restores the refresh controls'
@@ -191,7 +201,7 @@ function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collec
         Assert-True -Condition ($EmptyState.Visibility -eq 'Visible' -and $EmptyStateTitle.Text -eq 'Refresh canceled' -and $LoadingOverlay.Visibility -eq 'Collapsed') -Name 'Canceling the first load shows a useful empty state rather than a blank table'
 
         $stressApplied=$script:WorkflowApplied
-        $inventoryOperationScript="Start-Sleep -Milliseconds 5; [pscustomobject]@{Kind='InventoryResult';Devices=@('stress fixture');LoadedAt=[DateTimeOffset]::Now}"
+        Set-WorkflowCommand -Name Inventory -ScriptText "Start-Sleep -Milliseconds 5; [pscustomobject]@{Kind='InventoryResult';Devices=@('stress fixture');LoadedAt=[DateTimeOffset]::Now}"
         $stressControlsOk=$true
         for ($cycle=0; $cycle -lt 20; $cycle++) {
             Start-InventoryLoad
@@ -204,7 +214,7 @@ function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collec
         $script:PendingSecretRequest=[pscustomobject]@{VerificationGeneration=0}
         $script:RecoveryRequestCanceled=$false
         $script:MicrosoftVerificationCancelEvent=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset)
-        $null=Start-GraphOperation -Name MicrosoftVerification -ScriptText "Start-Sleep -Milliseconds 20; [pscustomobject]@{Kind='MicrosoftVerificationResult'}"
+        $null=Start-WorkflowCommand -Name MicrosoftVerification -ScriptText "Start-Sleep -Milliseconds 20; [pscustomobject]@{Kind='MicrosoftVerificationResult'}"
         Cancel-PendingRecoveryAction
         $wasSignaled=$script:MicrosoftVerificationCancelEvent.WaitOne(0)
         Wait-WorkflowFixture
@@ -220,7 +230,7 @@ function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collec
             $script:PendingBitLockerVerificationGeneration=0
             $script:ActiveRecoveryTab='LAPS'
             $payload=[pscustomobject]@{Kind=$(if($kind -eq 'Credential'){'CredentialResult'}else{'BitLockerKeyResult'});Password='synthetic';RecoveryKey='synthetic'}
-            $null=Start-GraphOperation -Name $kind -ScriptText 'param($Payload) $Payload' -Arguments @($payload)
+            $null=Start-WorkflowCommand -Name $kind -ScriptText 'param($Payload) $Payload' -Arguments @($payload)
             if(-not $script:CurrentOperation.AsyncResult.AsyncWaitHandle.WaitOne(2000)){throw 'Synthetic completed-result race did not finish.'}
             Set-RecoveryTab -Tab BitLocker
             Set-RecoveryTab -Tab LAPS
@@ -255,6 +265,10 @@ function Invoke-MgGraphRequest { [pscustomobject]@{ unexpected='malformed collec
         $script:GraphPowerShell=$null
         $script:GraphRunspace=$null
         $script:CurrentOperation=$null
+        foreach ($name in @('Authenticate','Inventory','Credential','BitLockerKey','MicrosoftVerification')) {
+            [IO.File]::Delete((Join-Path $operationsPath "$name.ps1"))
+        }
+        [IO.Directory]::Delete($operationsPath)
         $testWindow.Close()
     }
 }

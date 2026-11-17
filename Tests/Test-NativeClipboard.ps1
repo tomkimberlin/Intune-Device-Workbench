@@ -91,6 +91,7 @@ $script:SensitiveClockOrigin=[DateTimeOffset]::UtcNow
 $script:SensitiveClock=[Diagnostics.Stopwatch]::StartNew()
 $script:CurrentOperation=$null; $script:PendingSecretRequest=$null; $script:LocalVerificationTask=$null
 $script:CurrentCredential=$null; $script:CurrentBitLockerKey=$null
+$script:RevealedSecretKind = $null
 $script:CredentialExpiresAt=[DateTimeOffset]::MinValue; $script:BitLockerExpiresAt=[DateTimeOffset]::MinValue
 $script:ClipboardClearAt=[DateTimeOffset]::MinValue; $script:ClipboardDeviceId=$null; $script:ClipboardKind=$null; $script:ClipboardRecoveryKeyId=$null
 $script:ToastExpiresAt=[DateTimeOffset]::MinValue

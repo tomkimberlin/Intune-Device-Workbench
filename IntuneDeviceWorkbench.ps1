@@ -10,8 +10,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Anchor short-lived UI/clipboard deadlines to elapsed time, not the adjustable
-# Windows clock. Keep DateTimeOffset only as the existing deadline representation.
+# All clipboard, reveal and verification deadlines share this elapsed-time clock.
 $script:SensitiveClockOrigin = [DateTimeOffset]::UtcNow
 $script:SensitiveClock = [Diagnostics.Stopwatch]::StartNew()
 function Get-SensitiveClockNow {
@@ -28,6 +27,7 @@ if ($PSVersionTable.PSVersion -lt [version]'7.4') {
     throw 'PowerShell 7.4 or newer is required.'
 }
 $appRoot = $PSScriptRoot
+$operationsPath = Join-Path $appRoot 'Operations'
 $settingsPath = Join-Path $appRoot 'M365Workbench.settings.psd1'
 $coreModulePath = Join-Path $appRoot 'M365Workbench.Core.psm1'
 $secureClipboardPath = Join-Path $appRoot 'SecureClipboard.cs'
@@ -171,12 +171,10 @@ $script:DeviceView = $null
 $script:IsSignedIn = $false
 $script:LastDeviceCode = $null
 $script:SignInPageOpenedForCode = $null
+$script:RevealedSecretKind = $null
 $script:CurrentCredential = $null
-$script:CurrentCredentialDeviceId = $null
 $script:CredentialExpiresAt = [DateTimeOffset]::MinValue
 $script:CurrentBitLockerKey = $null
-$script:CurrentBitLockerKeyId = $null
-$script:CurrentBitLockerDeviceId = $null
 $script:BitLockerExpiresAt = [DateTimeOffset]::MinValue
 $script:ClipboardClearAt = [DateTimeOffset]::MinValue
 $script:ClipboardDeviceId = $null
@@ -193,432 +191,12 @@ $script:LocalVerificationCancellation = $null
 $script:MicrosoftVerificationCancelEvent = $null
 $script:SecretVerifiedUntil = [DateTimeOffset]::MinValue
 $script:RecentInteractiveAuthenticationUntil = [DateTimeOffset]::MinValue
-$script:SecretVerifiedDeadlineTimestamp = [int64]0
-$script:RecentInteractiveAuthenticationDeadlineTimestamp = [int64]0
 $script:SecretVerificationGeneration = 0
-$script:VerificationStateLock = [object]::new()
 $script:AuthenticationDeviceCodeObserved = $false
 $script:AuthenticationVerificationGeneration = $null
 $script:ActiveRecoveryTab = 'LAPS'
 $script:ToastExpiresAt = [DateTimeOffset]::MinValue
 $script:SelectionChanging = $false
-
-$authOperationScript = @'
-param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $CoreModulePath, $MinimumGraphVersion)
-& {
-    $ErrorActionPreference = 'Stop'
-    Import-Module $CoreModulePath -Force
-    try { Import-Module Microsoft.Graph.Authentication -MinimumVersion ([version]$MinimumGraphVersion) -ErrorAction Stop }
-    catch {
-        [pscustomobject]@{ Kind='Error'; ErrorCode='GraphModuleUnavailable'; Message=''; StatusCode=$null }
-        return
-    }
-
-    try {
-        $null = Set-MgRequestContext -ClientTimeout 20 -MaxRetry 1
-        # Preserve the SDK reconnect even when old context metadata still matches.
-        # The SDK can reuse its secure cache; never clear it or loop over sign-ins.
-        $connectParameters = @{
-            TenantId=$TenantId; UseDeviceCode=$true; Scopes=$RequiredScopes
-            ContextScope='CurrentUser'; ClientTimeout=20; NoWelcome=$true; ErrorAction='Stop'
-        }
-        Connect-MgGraph @connectParameters 6>&1
-        $context = Get-MgContext
-        $validation = Test-LapsGraphContext -Context $context -ExpectedAccount $ExpectedAccount -ExpectedTenantId $ExpectedTenantObjectId -RequiredScopes $RequiredScopes
-        if (-not $validation.IsValid) {
-            [pscustomobject]@{ Kind='Error'; ErrorCode=$validation.Reason; Message='The Graph context did not match the configured identity and permissions.'; StatusCode=$null }
-            return
-        }
-
-        # Context metadata is not proof that the token or connection works.
-        # A real request uses an existing scope and never retrieves recovery data.
-        $probe = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/devices?$select=id&$top=1' -OutputType PSObject -ErrorAction Stop
-        $null = Read-GraphCollectionPage -Response $probe -CollectionPath '/v1.0/devices'
-        [pscustomobject]@{
-            Kind='AuthResult'; Account=[string]$context.Account; TenantId=[string]$context.TenantId
-            Scopes=@($context.Scopes); ConnectionVerified=$true
-        }
-    }
-    catch {
-        ConvertTo-GraphOperationError -ErrorRecord $_ -Stage 'connection verification'
-    }
-}
-'@
-
-$microsoftVerificationChildScript = @'
-$ErrorActionPreference = 'Stop'
-$InformationPreference = 'Continue'
-$ProgressPreference = 'SilentlyContinue'
-$config = $null
-
-function Write-VerificationResult {
-    param(
-        [Parameter(Mandatory)][string]$Status,
-        [Parameter(Mandatory)][string]$Nonce,
-        [string]$ErrorCode = ''
-    )
-
-    $payload = [pscustomobject]@{ Status = $Status; ErrorCode = $ErrorCode } | ConvertTo-Json -Compress
-    $encodedPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
-    [Console]::Out.WriteLine("M365WB_VERIFY_RESULT::$Nonce::$encodedPayload")
-    [Console]::Out.Flush()
-}
-
-try {
-    $configJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:M365WB_VERIFY_CONFIG))
-    $config = $configJson | ConvertFrom-Json
-    Import-Module ([string]$config.CoreModulePath) -Force
-    Import-Module Microsoft.Graph.Authentication -MinimumVersion ([version]$config.MinimumGraphVersion) -ErrorAction Stop
-
-    Connect-MgGraph `
-        -TenantId ([string]$config.TenantId) `
-        -UseDeviceCode `
-        -Scopes ([string[]]$config.RequiredScopes) `
-        -ContextScope Process `
-        -NoWelcome `
-        -ErrorAction Stop 6>&1 |
-        ForEach-Object {
-            [Console]::Out.WriteLine([string]$_)
-            [Console]::Out.Flush()
-        }
-
-    $context = Get-MgContext
-    $validation = Test-LapsGraphContext `
-        -Context $context `
-        -ExpectedAccount ([string]$config.ExpectedAccount) `
-        -ExpectedTenantId ([Guid]$config.ExpectedTenantObjectId) `
-        -RequiredScopes ([string[]]$config.RequiredScopes)
-
-    if (-not $validation.IsValid) {
-        Write-VerificationResult -Status 'Rejected' -Nonce ([string]$config.Nonce) -ErrorCode ([string]$validation.Reason)
-        exit 3
-    }
-
-    Write-VerificationResult -Status 'Verified' -Nonce ([string]$config.Nonce)
-    exit 0
-}
-catch {
-    $errorCode = if ($_.Exception.PSObject.Properties['ErrorCode']) { [string]$_.Exception.ErrorCode } else { 'ConnectionFailed' }
-    try {
-        if ($null -ne $config -and -not [string]::IsNullOrWhiteSpace([string]$config.Nonce)) {
-            Write-VerificationResult -Status 'Failed' -Nonce ([string]$config.Nonce) -ErrorCode $errorCode
-        }
-    }
-    catch { }
-    exit 2
-}
-'@
-
-$microsoftVerificationOperationScript = @'
-param($TenantId, $ExpectedTenantObjectId, $ExpectedAccount, $RequiredScopes, $CoreModulePath, $MinimumGraphVersion, $PowerShellExecutable, $Nonce, $ChildScript, $CancelEvent, $TimeoutSeconds)
-& {
-    $ErrorActionPreference = 'Stop'
-    Import-Module $CoreModulePath -Force
-
-    $process = $null
-    $canceled = $false
-    $timedOut = $false
-    $deviceCodeObserved = $false
-    $childStatus = $null
-    $childErrorCode = $null
-    try {
-        $config = @{
-            TenantId                = [string]$TenantId
-            ExpectedTenantObjectId  = [string]$ExpectedTenantObjectId
-            ExpectedAccount         = [string]$ExpectedAccount
-            RequiredScopes          = [string[]]$RequiredScopes
-            CoreModulePath          = [string]$CoreModulePath
-            MinimumGraphVersion     = [string]$MinimumGraphVersion
-            Nonce                   = [string]$Nonce
-        }
-        $configJson = $config | ConvertTo-Json -Compress -Depth 4
-        $encodedConfig = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($configJson))
-        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([string]$ChildScript))
-
-        $startInfo = [Diagnostics.ProcessStartInfo]::new()
-        $startInfo.FileName = [string]$PowerShellExecutable
-        $startInfo.UseShellExecute = $false
-        $startInfo.CreateNoWindow = $true
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
-        $startInfo.ArgumentList.Add('-NoLogo')
-        $startInfo.ArgumentList.Add('-NoProfile')
-        $startInfo.ArgumentList.Add('-NonInteractive')
-        $startInfo.ArgumentList.Add('-EncodedCommand')
-        $startInfo.ArgumentList.Add($encodedCommand)
-        $startInfo.Environment['M365WB_VERIFY_CONFIG'] = $encodedConfig
-
-        $process = [Diagnostics.Process]::new()
-        $process.StartInfo = $startInfo
-        if (-not $process.Start()) {
-            throw 'The Microsoft verification process could not be started.'
-        }
-
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-        $sentinelPrefix = "M365WB_VERIFY_RESULT::$Nonce::"
-
-        :readLoop while ($true) {
-            if ($CancelEvent.WaitOne(0)) {
-                $canceled = $true
-                try { $process.Kill($true) } catch { }
-                break readLoop
-            }
-            if ($stopwatch.Elapsed.TotalSeconds -ge [double]$TimeoutSeconds) {
-                $timedOut = $true
-                try { $process.Kill($true) } catch { }
-                break readLoop
-            }
-
-            $lineTask = $process.StandardOutput.ReadLineAsync()
-            while (-not $lineTask.Wait(100)) {
-                if ($CancelEvent.WaitOne(0)) {
-                    $canceled = $true
-                    try { $process.Kill($true) } catch { }
-                    break readLoop
-                }
-                if ($stopwatch.Elapsed.TotalSeconds -ge [double]$TimeoutSeconds) {
-                    $timedOut = $true
-                    try { $process.Kill($true) } catch { }
-                    break readLoop
-                }
-            }
-
-            $line = $lineTask.GetAwaiter().GetResult()
-            if ($null -eq $line) {
-                break
-            }
-
-            $deviceCode = Get-DeviceCodeFromMessage -Message $line
-            if ($null -ne $deviceCode) {
-                $deviceCodeObserved = $true
-                Write-Output $line
-                continue
-            }
-
-            if ($line.StartsWith($sentinelPrefix, [StringComparison]::Ordinal)) {
-                try {
-                    $encodedPayload = $line.Substring($sentinelPrefix.Length)
-                    $payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedPayload))
-                    $payload = $payloadJson | ConvertFrom-Json
-                    $childStatus = [string]$payload.Status
-                    $childErrorCode = [string]$payload.ErrorCode
-                }
-                catch {
-                    $childStatus = 'InvalidResult'
-                }
-            }
-        }
-
-        if (-not $process.HasExited) {
-            $null = $process.WaitForExit(5000)
-        }
-
-        if ($CancelEvent.WaitOne(0)) {
-            $canceled = $true
-        }
-
-        if ($canceled) {
-            [pscustomobject]@{ Kind = 'VerificationCanceled' }
-            return
-        }
-        if ($timedOut) {
-            [pscustomobject]@{ Kind = 'VerificationError'; ErrorCode = 'VerificationTimedOut' }
-            return
-        }
-        if ($process.ExitCode -eq 0 -and $childStatus -eq 'Verified' -and $deviceCodeObserved) {
-            [pscustomobject]@{ Kind = 'MicrosoftVerificationResult' }
-            return
-        }
-        if ($process.ExitCode -eq 0 -and $childStatus -eq 'Verified' -and -not $deviceCodeObserved) {
-            [pscustomobject]@{ Kind = 'VerificationError'; ErrorCode = 'InteractiveVerificationNotObserved' }
-            return
-        }
-
-        [pscustomobject]@{
-            Kind = 'VerificationError'
-            ErrorCode = if ([string]::IsNullOrWhiteSpace($childErrorCode)) { 'MicrosoftVerificationFailed' } else { $childErrorCode }
-        }
-    }
-    catch {
-        [pscustomobject]@{ Kind = 'VerificationError'; ErrorCode = 'MicrosoftVerificationFailed' }
-    }
-    finally {
-        if ($null -ne $process) {
-            if (-not $process.HasExited) {
-                try { $process.Kill($true) } catch { }
-            }
-            $process.Dispose()
-        }
-    }
-}
-'@
-
-$inventoryOperationScript = @'
-param($CoreModulePath)
-& {
-    $ErrorActionPreference = 'Stop'
-    Import-Module $CoreModulePath -Force
-    $stage = 'managed device inventory'
-
-    function Invoke-PagedGraphGet {
-        param([Parameter(Mandatory)][string]$Uri)
-
-        $visited = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        $collectionPath = ([uri]$Uri).AbsolutePath
-        $next = $Uri
-        while ($next) {
-            if (-not $visited.Add($next) -or $visited.Count -gt 10000) {
-                throw 'Microsoft Graph inventory pagination did not complete safely.'
-            }
-            $response = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType PSObject -ErrorAction Stop
-            $page = Read-GraphCollectionPage -Response $response -CollectionPath $collectionPath
-            $page.Items
-            $next = $page.NextLink
-        }
-    }
-
-    try {
-        $managedUri = 'https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$select=id,deviceName,azureADDeviceId,serialNumber,operatingSystem,osVersion,model,manufacturer,lastSyncDateTime,complianceState,managedDeviceOwnerType,deviceEnrollmentType,isEncrypted,managementAgent,enrolledDateTime'
-        $lapsUri = "https://graph.microsoft.com/v1.0/directory/deviceLocalCredentials?`$select=id,deviceName,lastBackupDateTime,refreshDateTime"
-        $bitLockerUri = "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys"
-        $entraUri = 'https://graph.microsoft.com/v1.0/devices?$select=id,deviceId,displayName,accountEnabled,operatingSystem,operatingSystemVersion,trustType,approximateLastSignInDateTime,manufacturer,model'
-
-        $currentManagedDevices = Get-CurrentManagedDeviceMap -ManagedDevices @(Invoke-PagedGraphGet -Uri $managedUri)
-        $stage = 'Intune primary users'
-        $primaryUsers = Get-IntunePrimaryUserMap -ManagedDevices @($currentManagedDevices.Values)
-        $stage = 'LAPS metadata'
-        $lapsMetadata = @(Invoke-PagedGraphGet -Uri $lapsUri)
-        $stage = 'BitLocker metadata'
-        $bitLockerMetadata = @(Invoke-PagedGraphGet -Uri $bitLockerUri)
-        $stage = 'Entra device inventory'
-        $entraDevices = @(Invoke-PagedGraphGet -Uri $entraUri)
-        $rows = @(Merge-IntuneLapsDeviceData -CurrentManagedDevices $currentManagedDevices -LapsMetadata $lapsMetadata -BitLockerMetadata $bitLockerMetadata -EntraDevices $entraDevices -PrimaryUsersByManagedDeviceId $primaryUsers)
-
-        [pscustomobject]@{
-            Kind = 'InventoryResult'
-            Devices = $rows
-            LoadedAt = [DateTimeOffset]::Now
-        }
-    }
-    catch {
-        ConvertTo-GraphOperationError -ErrorRecord $_ -Stage $stage
-    }
-}
-'@
-
-$credentialOperationScript = @'
-param($DeviceId, $CoreModulePath)
-& {
-    $ErrorActionPreference = 'Stop'
-    Import-Module $CoreModulePath -Force
-    $response = $null
-    $records = @()
-    $credential = $null
-    $password = $null
-
-    try {
-        $parsedId = [Guid]::Empty
-        if (-not [Guid]::TryParse($DeviceId, [ref]$parsedId) -or $parsedId -eq [Guid]::Empty) {
-            throw 'The selected computer does not have a usable Microsoft Entra device ID.'
-        }
-
-        $escapedId = [Uri]::EscapeDataString($parsedId.ToString())
-        $uri = "https://graph.microsoft.com/v1.0/directory/deviceLocalCredentials/$escapedId`?`$select=id,credentials"
-        $response = Invoke-MgGraphRequest -Method GET -Uri $uri -OutputType PSObject -ErrorAction Stop
-        $records = @($response)
-        if ($null -ne $response -and $null -ne $response.PSObject.Properties['value']) {
-            $records = @($response.value)
-        }
-        $returnedId = [guid]::Empty
-        if ($records.Count -ne 1 -or $null -eq $records[0] -or $null -eq $records[0].PSObject.Properties['id'] -or
-            -not [guid]::TryParse([string]$records[0].id, [ref]$returnedId) -or $returnedId -ne $parsedId) {
-            throw 'Microsoft Graph returned a LAPS credential for a different device.'
-        }
-
-        $credential = Select-CurrentLapsCredential -Credentials @($records[0].credentials)
-        if ($null -eq $credential) {
-            [pscustomobject]@{ Kind = 'Error'; ErrorCode = 'NoCredential'; Message = 'No current LAPS credential was returned.'; StatusCode = 404 }
-            return
-        }
-
-        $password = ConvertFrom-LapsPasswordBase64 -PasswordBase64 ([string]$credential.passwordBase64)
-
-        [pscustomobject]@{
-            Kind = 'CredentialResult'
-            DeviceId = $parsedId.ToString()
-            AccountName = [string]$credential.accountName
-            Password = $password
-        }
-    }
-    catch {
-        ConvertTo-GraphOperationError -ErrorRecord $_
-    }
-    finally {
-        foreach ($record in $records) {
-            if ($null -eq $record -or $null -eq $record.PSObject.Properties['credentials']) { continue }
-            foreach ($item in @($record.credentials)) {
-                if ($null -ne $item -and $null -ne $item.PSObject.Properties['passwordBase64']) { $item.passwordBase64 = $null }
-            }
-        }
-        $password = $null
-        $credential = $null
-        $response = $null
-    }
-}
-'@
-
-$bitLockerKeyOperationScript = @'
-param($DeviceId, $RecoveryKeyId, $CoreModulePath)
-& {
-    $ErrorActionPreference = 'Stop'
-    Import-Module $CoreModulePath -Force
-    $response = $null
-    $recoveryKey = $null
-
-    try {
-        $parsedDeviceId = [Guid]::Empty
-        $parsedKeyId = [Guid]::Empty
-        if (-not [Guid]::TryParse($DeviceId, [ref]$parsedDeviceId) -or $parsedDeviceId -eq [Guid]::Empty) {
-            throw 'The selected computer does not have a usable Microsoft Entra device ID.'
-        }
-        if (-not [Guid]::TryParse($RecoveryKeyId, [ref]$parsedKeyId) -or $parsedKeyId -eq [Guid]::Empty) {
-            throw 'The selected BitLocker recovery-key record is invalid.'
-        }
-
-        $escapedKeyId = [Uri]::EscapeDataString($parsedKeyId.ToString())
-        $uri = "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys/$escapedKeyId`?`$select=id,key,deviceId"
-        $response = Invoke-MgGraphRequest -Method GET -Uri $uri -OutputType PSObject -ErrorAction Stop
-        if ([guid]$response.id -ne $parsedKeyId) {
-            throw 'Microsoft Graph returned a different BitLocker recovery-key record.'
-        }
-        $responseDeviceId = [guid]::Empty
-        if (-not [guid]::TryParse([string]$response.deviceId, [ref]$responseDeviceId) -or $responseDeviceId -ne $parsedDeviceId) {
-            throw 'Microsoft Graph returned a BitLocker key for a different device.'
-        }
-
-        $recoveryKey = ([string]$response.key).Trim()
-        if (-not (Test-BitLockerRecoveryKey -Value $recoveryKey)) {
-            throw 'Microsoft Graph did not return a valid 48-digit BitLocker recovery key.'
-        }
-
-        [pscustomobject]@{
-            Kind = 'BitLockerKeyResult'
-            DeviceId = $parsedDeviceId.ToString()
-            RecoveryKeyId = $parsedKeyId.ToString()
-            RecoveryKey = $recoveryKey
-        }
-    }
-    catch {
-        ConvertTo-GraphOperationError -ErrorRecord $_
-    }
-    finally {
-        if ($null -ne $response -and $null -ne $response.PSObject.Properties['key']) { $response.key = $null }
-        $recoveryKey = $null
-        $response = $null
-    }
-}
-'@
 
 function Find-DeviceScrollViewer {
     param([Parameter(Mandatory)][System.Windows.DependencyObject]$Parent)
@@ -740,6 +318,7 @@ function Clear-SecretDisplay {
         [switch]$PreserveBitLockerStatus
     )
 
+    $script:RevealedSecretKind = $null
     if ($null -ne $script:CurrentCredential) {
         $passwordProperty = $script:CurrentCredential.PSObject.Properties['Password']
         if ($null -ne $passwordProperty) {
@@ -748,7 +327,6 @@ function Clear-SecretDisplay {
     }
 
     $script:CurrentCredential = $null
-    $script:CurrentCredentialDeviceId = $null
     $script:CredentialExpiresAt = [DateTimeOffset]::MinValue
     $PasswordText.Text = '••••••••••••••••'
     $CopyPasswordButtonText.Text = 'Copy password'
@@ -764,8 +342,6 @@ function Clear-SecretDisplay {
         }
     }
     $script:CurrentBitLockerKey = $null
-    $script:CurrentBitLockerKeyId = $null
-    $script:CurrentBitLockerDeviceId = $null
     $script:BitLockerExpiresAt = [DateTimeOffset]::MinValue
     $BitLockerKeyText.Text = '••••••-••••••-••••••-••••••-••••••-••••••-••••••-••••••'
     $CopyRecoveryKeyButtonText.Text = 'Copy recovery key'
@@ -784,13 +360,13 @@ function Update-ClipboardStatusForSelection {
         $script:ClipboardClearAt -gt $now) {
         $seconds = [Math]::Max(0, [Math]::Ceiling(($script:ClipboardClearAt - $now).TotalSeconds))
         $message = "Copied securely • clipboard clears in $seconds seconds"
-        if ($script:ClipboardKind -eq 'LAPS') {
+        if ($script:ClipboardKind -eq 'LAPS' -and $script:RevealedSecretKind -ne 'LAPS') {
             if ($PasswordCountdownText.Text -ne $message) {
                 Set-PasswordStatus -Message $message -DotColor '#15803D' -TextColor '#166534'
             }
             return $true
         }
-        if ($script:ClipboardKind -eq 'BitLocker') {
+        if ($script:ClipboardKind -eq 'BitLocker' -and $script:RevealedSecretKind -ne 'BitLocker') {
             $selectedKey = $BitLockerKeySelector.SelectedItem
             if ($null -ne $selectedKey -and
                 [string]::Equals([string]$selectedKey.Id, [string]$script:ClipboardRecoveryKeyId, [StringComparison]::OrdinalIgnoreCase)) {
@@ -802,10 +378,10 @@ function Update-ClipboardStatusForSelection {
         }
     }
 
-    if ($PasswordText.Text -eq '••••••••••••••••' -and $PasswordCountdownText.Text -ne 'Password remains hidden until requested') {
+    if ($script:RevealedSecretKind -ne 'LAPS' -and $PasswordCountdownText.Text -ne 'Password remains hidden until requested') {
         Set-PasswordStatus -Message 'Password remains hidden until requested'
     }
-    if ($BitLockerKeyText.Text -like '••••••-*' -and $BitLockerCountdownText.Text -ne 'Recovery key remains hidden until requested') {
+    if ($script:RevealedSecretKind -ne 'BitLocker' -and $BitLockerCountdownText.Text -ne 'Recovery key remains hidden until requested') {
         Set-BitLockerStatus -Message 'Recovery key remains hidden until requested'
     }
     return $false
@@ -957,8 +533,7 @@ function Initialize-GraphWorker {
 
 function Start-GraphOperation {
     param(
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$ScriptText,
+        [Parameter(Mandatory)][ValidateSet('Authenticate','Inventory','Credential','BitLockerKey','MicrosoftVerification')][string]$Name,
         [object[]]$Arguments = @()
     )
 
@@ -982,7 +557,7 @@ function Start-GraphOperation {
         Initialize-GraphWorker
         $script:GraphPowerShell.Commands.Clear()
         $script:GraphPowerShell.Streams.ClearStreams()
-        $null = $script:GraphPowerShell.AddScript($ScriptText)
+        $null = $script:GraphPowerShell.AddCommand((Join-Path $operationsPath "$Name.ps1"))
         foreach ($argument in $Arguments) { $null = $script:GraphPowerShell.AddArgument($argument) }
         $operation.AsyncResult = $script:GraphPowerShell.BeginInvoke[psobject, psobject]($inputCollection, $outputCollection)
     }
@@ -1113,117 +688,40 @@ function Set-SecretActionBusy {
     $SignInButton.IsEnabled = $false
 }
 
-function Get-SecretVerificationSnapshot {
-    [Threading.Monitor]::Enter($script:VerificationStateLock)
-    try {
-        $timestampNow = [Diagnostics.Stopwatch]::GetTimestamp()
-        $verifiedUntil = if ($script:SecretVerifiedDeadlineTimestamp -gt $timestampNow) {
-            $remainingSeconds = [double]($script:SecretVerifiedDeadlineTimestamp - $timestampNow) / [double][Diagnostics.Stopwatch]::Frequency
-            [DateTimeOffset]::Now.AddSeconds($remainingSeconds)
-        }
-        else {
-            [DateTimeOffset]::MinValue
-        }
-        $recentAuthenticationUntil = if ($script:RecentInteractiveAuthenticationDeadlineTimestamp -gt $timestampNow) {
-            $remainingSeconds = [double]($script:RecentInteractiveAuthenticationDeadlineTimestamp - $timestampNow) / [double][Diagnostics.Stopwatch]::Frequency
-            [DateTimeOffset]::Now.AddSeconds($remainingSeconds)
-        }
-        else {
-            [DateTimeOffset]::MinValue
-        }
-        return [pscustomobject]@{
-            Generation = $script:SecretVerificationGeneration
-            VerifiedUntil = $verifiedUntil
-            RecentInteractiveAuthenticationUntil = $recentAuthenticationUntil
-        }
-    }
-    finally {
-        [Threading.Monitor]::Exit($script:VerificationStateLock)
-    }
-}
-
+# Only the WPF dispatcher owns these grants. Background operations return a
+# result to the dispatcher, which checks the request generation before using it.
 function Set-SecretVerificationGranted {
     param([Parameter(Mandatory)][int]$ExpectedGeneration)
-
-    [Threading.Monitor]::Enter($script:VerificationStateLock)
-    try {
-        if ($script:SecretVerificationGeneration -ne $ExpectedGeneration) {
-            return $false
-        }
-        $script:SecretVerifiedUntil = [DateTimeOffset]::Now.AddSeconds($secretVerificationSeconds)
-        $script:SecretVerifiedDeadlineTimestamp = [Diagnostics.Stopwatch]::GetTimestamp() + ([int64]$secretVerificationSeconds * [Diagnostics.Stopwatch]::Frequency)
-        return $true
-    }
-    finally {
-        [Threading.Monitor]::Exit($script:VerificationStateLock)
-    }
+    if ($script:SecretVerificationGeneration -ne $ExpectedGeneration) { return $false }
+    $script:SecretVerifiedUntil = (Get-SensitiveClockNow).AddSeconds($secretVerificationSeconds)
+    return $true
 }
 
 function Set-RecentInteractiveAuthentication {
     param([Parameter(Mandatory)][int]$ExpectedGeneration)
-
-    [Threading.Monitor]::Enter($script:VerificationStateLock)
-    try {
-        if ($script:SecretVerificationGeneration -ne $ExpectedGeneration) {
-            return $false
-        }
-        $script:RecentInteractiveAuthenticationUntil = [DateTimeOffset]::Now.AddSeconds($secretVerificationSeconds)
-        $script:RecentInteractiveAuthenticationDeadlineTimestamp = [Diagnostics.Stopwatch]::GetTimestamp() + ([int64]$secretVerificationSeconds * [Diagnostics.Stopwatch]::Frequency)
-        return $true
-    }
-    finally {
-        [Threading.Monitor]::Exit($script:VerificationStateLock)
-    }
+    if ($script:SecretVerificationGeneration -ne $ExpectedGeneration) { return $false }
+    $script:RecentInteractiveAuthenticationUntil = (Get-SensitiveClockNow).AddSeconds($secretVerificationSeconds)
+    return $true
 }
 
 function Use-RecentInteractiveAuthentication {
     param([Parameter(Mandatory)][int]$ExpectedGeneration)
-
-    [Threading.Monitor]::Enter($script:VerificationStateLock)
-    try {
-        if ($script:SecretVerificationGeneration -ne $ExpectedGeneration -or
-            [Diagnostics.Stopwatch]::GetTimestamp() -ge $script:RecentInteractiveAuthenticationDeadlineTimestamp) {
-            return $false
-        }
-        $script:SecretVerifiedUntil = $script:RecentInteractiveAuthenticationUntil
-        $script:SecretVerifiedDeadlineTimestamp = $script:RecentInteractiveAuthenticationDeadlineTimestamp
-        return $true
-    }
-    finally {
-        [Threading.Monitor]::Exit($script:VerificationStateLock)
-    }
+    if ($script:SecretVerificationGeneration -ne $ExpectedGeneration -or
+        (Get-SensitiveClockNow) -ge $script:RecentInteractiveAuthenticationUntil) { return $false }
+    $script:SecretVerifiedUntil = $script:RecentInteractiveAuthenticationUntil
+    return $true
 }
 
 function Test-SecretVerificationGeneration {
-    param([AllowNull()][object]$Generation)
-
-    [Threading.Monitor]::Enter($script:VerificationStateLock)
-    try {
-        if ($null -eq $Generation -or [int]$Generation -ne $script:SecretVerificationGeneration) {
-            return $false
-        }
-        if ($secretVerificationMode -eq 'Disabled') {
-            return $true
-        }
-        return [Diagnostics.Stopwatch]::GetTimestamp() -lt $script:SecretVerifiedDeadlineTimestamp
-    }
-    finally {
-        [Threading.Monitor]::Exit($script:VerificationStateLock)
-    }
+    param([AllowNull()][Nullable[int]]$Generation)
+    return $null -ne $Generation -and $Generation -eq $script:SecretVerificationGeneration -and
+        ($secretVerificationMode -eq 'Disabled' -or (Get-SensitiveClockNow) -lt $script:SecretVerifiedUntil)
 }
 
 function Clear-SecretVerificationState {
-    [Threading.Monitor]::Enter($script:VerificationStateLock)
-    try {
-        $script:SecretVerifiedUntil = [DateTimeOffset]::MinValue
-        $script:RecentInteractiveAuthenticationUntil = [DateTimeOffset]::MinValue
-        $script:SecretVerifiedDeadlineTimestamp = [int64]0
-        $script:RecentInteractiveAuthenticationDeadlineTimestamp = [int64]0
-        $script:SecretVerificationGeneration++
-    }
-    finally {
-        [Threading.Monitor]::Exit($script:VerificationStateLock)
-    }
+    $script:SecretVerifiedUntil = [DateTimeOffset]::MinValue
+    $script:RecentInteractiveAuthenticationUntil = [DateTimeOffset]::MinValue
+    $script:SecretVerificationGeneration++
     if ($null -ne $script:LocalVerificationCancellation) {
         try { $script:LocalVerificationCancellation.Cancel() } catch { }
     }
@@ -1314,8 +812,7 @@ function Start-MicrosoftSecretVerification {
         Fail-SecretVerification -Message 'Microsoft verification could not start. Try the recovery action again.'
         return
     }
-    $verificationSnapshot = Get-SecretVerificationSnapshot
-    if ([int]$script:PendingSecretRequest.VerificationGeneration -ne [int]$verificationSnapshot.Generation) {
+    if ([int]$script:PendingSecretRequest.VerificationGeneration -ne $script:SecretVerificationGeneration) {
         Fail-SecretVerification -Message 'The Windows session changed, so verification was canceled.' -Canceled
         return
     }
@@ -1339,7 +836,7 @@ function Start-MicrosoftSecretVerification {
     $null = $CancelVerificationButton.Focus()
 
     $powerShellExecutable = Join-Path $PSHOME 'pwsh.exe'
-    $started = Start-GraphOperation -Name 'MicrosoftVerification' -ScriptText $microsoftVerificationOperationScript -Arguments @(
+    $started = Start-GraphOperation -Name 'MicrosoftVerification' -Arguments @(
         $settings.TenantId,
         $settings.TenantObjectId,
         $settings.ExpectedAccount,
@@ -1348,7 +845,7 @@ function Start-MicrosoftSecretVerification {
         $settings.GraphModuleMinimumVersion,
         $powerShellExecutable,
         $nonce,
-        $microsoftVerificationChildScript,
+        (Join-Path $operationsPath 'VerifyMicrosoftAccount.ps1'),
         $script:MicrosoftVerificationCancelEvent,
         300
     )
@@ -1390,8 +887,7 @@ function Complete-LocalSecretVerification {
         return
     }
     $expectedGeneration = [int]$script:PendingSecretRequest.VerificationGeneration
-    $verificationSnapshot = Get-SecretVerificationSnapshot
-    if ($expectedGeneration -ne [int]$verificationSnapshot.Generation) {
+    if ($expectedGeneration -ne $script:SecretVerificationGeneration) {
         Fail-SecretVerification -Message 'The Windows session changed, so verification was canceled.' -Canceled
         return
     }
@@ -1416,10 +912,8 @@ function Complete-LocalSecretVerification {
     }
     $script:LocalVerificationTask = $null
 
-    $decision = Get-SecretVerificationDecision `
-        -Mode $secretVerificationMode `
-        -LocalResult $localResult `
-        -VerifiedUntil $verificationSnapshot.VerifiedUntil
+    if ([string]::IsNullOrWhiteSpace($localResult)) { $localResult = 'Error' }
+    $decision = Get-SecretVerificationDecision -Mode $secretVerificationMode -LocalResult $localResult
 
     switch ($decision) {
         'Grant' {
@@ -1475,20 +969,19 @@ function Request-SecretAction {
         return
     }
 
-    $verificationSnapshot = Get-SecretVerificationSnapshot
     $script:RecoveryRequestCanceled = $false
     $script:PendingSecretRequest = [pscustomobject]@{
         Kind          = $Kind
         Action        = $Action
         DeviceId      = [string]$selected.EntraDeviceId
         RecoveryKeyId = if ($null -eq $selectedKey) { $null } else { [string]$selectedKey.Id }
-        VerificationGeneration = [int]$verificationSnapshot.Generation
+        VerificationGeneration = $script:SecretVerificationGeneration
     }
     Set-SecretActionBusy -Kind $Kind
 
     $decision = Get-SecretVerificationDecision `
         -Mode $secretVerificationMode `
-        -VerifiedUntil $verificationSnapshot.VerifiedUntil
+        -VerifiedUntil $script:SecretVerifiedUntil -Now (Get-SensitiveClockNow)
     if ($decision -in @('Grant', 'Bypass')) {
         Resume-PendingSecretRequest
         return
@@ -1502,8 +995,7 @@ function Start-Authentication {
         return
     }
 
-    $authenticationSnapshot = Get-SecretVerificationSnapshot
-    $script:AuthenticationVerificationGeneration = [int]$authenticationSnapshot.Generation
+    $script:AuthenticationVerificationGeneration = $script:SecretVerificationGeneration
 
     $AuthOverlayTitle.Text = 'Microsoft sign-in'
     $AuthOverlaySubtitle.Text = 'Connect to load devices'
@@ -1522,7 +1014,7 @@ function Start-Authentication {
     Set-AppStatus -Message 'Connecting securely to Microsoft Graph...' -Busy
     Set-AuthenticationDisplay -SignedIn $false -Text 'Connecting...'
 
-    $authenticationStarted = Start-GraphOperation -Name 'Authenticate' -ScriptText $authOperationScript -Arguments @(
+    $authenticationStarted = Start-GraphOperation -Name 'Authenticate' -Arguments @(
         $settings.TenantId,
         $settings.TenantObjectId,
         $settings.ExpectedAccount,
@@ -1541,7 +1033,7 @@ function Start-InventoryLoad {
     }
 
     Set-InventoryLoadingState
-    $null = Start-GraphOperation -Name 'Inventory' -ScriptText $inventoryOperationScript -Arguments @($coreModulePath)
+    $null = Start-GraphOperation -Name 'Inventory' -Arguments @($coreModulePath)
 }
 
 function Set-InventoryLoadingState {
@@ -1757,33 +1249,22 @@ function Update-FilteredCount {
     $EmptyState.Visibility = if ($visibleCount -eq 0) { 'Visible' } else { 'Collapsed' }
 }
 
-function Refresh-DeviceFilter {
-    if ($null -eq $script:DeviceView) {
-        return
-    }
+function Get-DeviceFilter {
+    $query = $SearchBox.Text.Trim().ToLowerInvariant()
+    $readyOnly = $OnlyReadyCheckBox.IsChecked -eq $true
+    $entraOnly = $EntraOnlyCheckBox.IsChecked -eq $true
+    if (-not $readyOnly -and -not $entraOnly -and $query.Length -eq 0) { return $null }
+    return [Predicate[object]]{
+        param($item)
+        return $null -ne $item -and (-not $readyOnly -or $item.RecoveryAvailable) -and
+            (-not $entraOnly -or $item.IsEntraOnly) -and
+            ($query.Length -eq 0 -or ([string]$item.SearchText).Contains($query))
+    }.GetNewClosure()
+}
 
-    # Normalize before refreshing/counting. Unchecking fires a synchronous nested
-    # refresh; doing it inside Update-FilteredCount lets the outer call overwrite
-    # the correct count and empty-state visibility with its stale snapshot.
-    if ($script:InventoryCounts.EntraOnly -eq 0 -and $EntraOnlyCheckBox.IsChecked -eq $true) {
-        $EntraOnlyCheckBox.IsChecked = $false
-    }
-    # Snapshot controls once per refresh, not once for every inventory row.
-    $script:FilterQuery = $SearchBox.Text.Trim().ToLowerInvariant()
-    $script:FilterReadyOnly = $OnlyReadyCheckBox.IsChecked -eq $true
-    $script:FilterEntraOnly = $EntraOnlyCheckBox.IsChecked -eq $true
-    if ($null -eq $script:DeviceView.Filter) {
-        $script:DeviceView.Filter = [Predicate[object]]{
-            param($item)
-            if ($null -eq $item) { return $false }
-            return (-not $script:FilterReadyOnly -or [bool]$item.RecoveryAvailable) -and
-                (-not $script:FilterEntraOnly -or [bool]$item.IsEntraOnly) -and
-                ($script:FilterQuery.Length -eq 0 -or ([string]$item.SearchText).Contains($script:FilterQuery))
-        }
-    }
-    else {
-        $script:DeviceView.Refresh()
-    }
+function Refresh-DeviceFilter {
+    if ($null -eq $script:DeviceView) { return }
+    $script:DeviceView.Filter = Get-DeviceFilter
     Update-FilteredCount
     if ($script:DeviceView.IsEmpty) {
         $DeviceGrid.SelectedItem = $null
@@ -1802,7 +1283,7 @@ function Get-InventorySelectionId {
         $property = $Device.PSObject.Properties[$field]
         $id = [Guid]::Empty
         if ($null -ne $property -and [Guid]::TryParse([string]$property.Value, [ref]$id) -and $id -ne [Guid]::Empty) {
-            return "$field`:$($id.ToString('D'))"
+            return [pscustomobject]@{ Field=$field; Id=$id }
         }
     }
     return $null
@@ -1811,70 +1292,57 @@ function Get-InventorySelectionId {
 function Set-DeviceInventory {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Devices)
 
-    $previousSelection = Get-SelectedDevice
-    $previousDeviceId = Get-InventorySelectionId -Device $previousSelection
-    $previousKeyId = if ($null -eq $BitLockerKeySelector.SelectedItem) { $null } else { [string]$BitLockerKeySelector.SelectedItem.Id }
+    $previousId = Get-InventorySelectionId (Get-SelectedDevice)
+    $previousKeyId = if ($null -ne $BitLockerKeySelector.SelectedItem) { $BitLockerKeySelector.SelectedItem.Id }
     $sorts = @(if ($null -ne $script:DeviceView) { $script:DeviceView.SortDescriptions })
-    $script:AllDevices = @($Devices)
+
+    # Each successful refresh replaces the entire snapshot.
+    $script:AllDevices = $Devices
     $script:InventoryCounts = @{ Laps=0; BitLocker=0; EntraOnly=0 }
-    $collection = [System.Collections.ObjectModel.ObservableCollection[object]]::new()
-    foreach ($device in $script:AllDevices) {
-        $collection.Add($device)
+    $previousRow = $null
+    foreach ($device in $Devices) {
         if ($device.LapsAvailable) { $script:InventoryCounts.Laps++ }
         if ($device.BitLockerAvailable) { $script:InventoryCounts.BitLocker++ }
         if ($device.IsEntraOnly) { $script:InventoryCounts.EntraOnly++ }
+        if ($null -ne $previousId -and $null -eq $previousRow) {
+            $property = $device.PSObject.Properties[$previousId.Field]
+            $id = [guid]::Empty
+            if ($null -ne $property -and [guid]::TryParse([string]$property.Value, [ref]$id) -and $id -eq $previousId.Id) {
+                $previousRow = $device
+            }
+        }
     }
 
-    $DeviceGrid.ItemsSource = $collection
-    $script:DeviceView = [System.Windows.Data.CollectionViewSource]::GetDefaultView($collection)
-    if ($sorts.Count -gt 0) {
-        $defer = $script:DeviceView.DeferRefresh()
-        try { foreach ($sort in $sorts) { $script:DeviceView.SortDescriptions.Add($sort) } }
+    # Unchecking fires a synchronous event. Publish only the completed view.
+    $script:DeviceView = $null
+    if ($script:InventoryCounts.EntraOnly -eq 0 -and $EntraOnlyCheckBox.IsChecked -eq $true) {
+        $EntraOnlyCheckBox.IsChecked = $false
+    }
+    $view = [Windows.Data.ListCollectionView]::new($Devices)
+    $view.Filter = Get-DeviceFilter
+    $restoreSelection = $null -ne $previousRow -and $view.Contains($previousRow)
+    if ($restoreSelection) { $null = $view.MoveCurrentTo($previousRow) }
+    $script:DeviceView = $view
+    $DeviceGrid.ItemsSource = $view
+    # DataGrid clears sort descriptions when it receives a new source.
+    if ($sorts.Count) {
+        $defer = $view.DeferRefresh()
+        try { foreach ($sort in $sorts) { $view.SortDescriptions.Add($sort) } }
         finally { $defer.Dispose() }
-        foreach ($column in $DeviceGrid.Columns) {
-            $sort = $sorts | Where-Object PropertyName -eq $column.SortMemberPath | Select-Object -First 1
-            $column.SortDirection = if ($null -eq $sort) { $null } else { $sort.Direction }
+    }
+    $selection = if ($restoreSelection) { $previousRow } elseif (-not $view.IsEmpty) { $view.GetItemAt(0) }
+    $DeviceGrid.SelectedItem = $selection
+    foreach ($column in $DeviceGrid.Columns) {
+        $sort = $sorts | Where-Object PropertyName -eq $column.SortMemberPath | Select-Object -First 1
+        $column.SortDirection = if ($null -ne $sort) { $sort.Direction }
+    }
+    if ($restoreSelection -and $previousKeyId) {
+        foreach ($key in $BitLockerKeySelector.Items) {
+            if ($key.Id -eq $previousKeyId) { $BitLockerKeySelector.SelectedItem = $key; break }
         }
     }
-    Refresh-DeviceFilter
-    if (-not $script:DeviceView.IsEmpty) {
-        $selection = $null
-        $sameDevice = $false
-        if (-not [string]::IsNullOrWhiteSpace($previousDeviceId)) {
-            $selectionField, $selectionValue = $previousDeviceId -split ':', 2
-            foreach ($candidate in $script:DeviceView) {
-                $property = $candidate.PSObject.Properties[$selectionField]
-                if ($null -eq $property) { continue }
-                $candidateId = [string]$property.Value
-                if ($candidateId.Length -ne 36) {
-                    $parsed = [Guid]::Empty
-                    if ([Guid]::TryParse($candidateId, [ref]$parsed)) { $candidateId = $parsed.ToString('D') }
-                }
-                if ([string]::Equals($candidateId, $selectionValue, [StringComparison]::OrdinalIgnoreCase)) {
-                    $selection = $candidate
-                    $sameDevice = $true
-                    break
-                }
-            }
-        }
-        if ($null -eq $selection) {
-            $selection = $script:DeviceView.GetItemAt(0)
-        }
-        $DeviceGrid.SelectedItem = $selection
-        if ($sameDevice -and -not [string]::IsNullOrWhiteSpace($previousKeyId)) {
-            foreach ($key in $BitLockerKeySelector.Items) {
-                if ([string]::Equals([string]$key.Id, $previousKeyId, [StringComparison]::OrdinalIgnoreCase)) {
-                    $BitLockerKeySelector.SelectedItem = $key
-                    break
-                }
-            }
-        }
-        $DeviceGrid.ScrollIntoView($DeviceGrid.SelectedItem)
-    }
-    else {
-        $DeviceGrid.SelectedItem = $null
-        Update-DetailPanel
-    }
+    Update-FilteredCount
+    if ($null -ne $selection) { $DeviceGrid.ScrollIntoView($selection) } else { Update-DetailPanel }
     $LoadingOverlay.Visibility = 'Collapsed'
     $RefreshButtonText.Text = 'Refresh'
 }
@@ -1896,8 +1364,9 @@ function Complete-CredentialAction {
     }
 
     $script:CurrentCredential = $Credential
-    $script:CurrentCredentialDeviceId = [string]$Credential.DeviceId
-    $script:CredentialExpiresAt = (Get-SensitiveClockNow).AddSeconds([int]$settings.RevealSeconds)
+    if ($script:RevealedSecretKind -ne 'LAPS') {
+        $script:CredentialExpiresAt = (Get-SensitiveClockNow).AddSeconds($settings.RevealSeconds)
+    }
     $AccountNameText.Text = [string]$Credential.AccountName
     $CopyAccountButton.IsEnabled = $true
     $CopyPasswordButtonText.Text = 'Copy password'
@@ -1905,7 +1374,7 @@ function Complete-CredentialAction {
     if ($Action -eq 'Copy') {
         try {
             Set-ProtectedClipboardText -Text $Credential.Password -Kind LAPS -DeviceId $selected.EntraDeviceId
-            Set-PasswordStatus -Message "Copied securely • clipboard clears in $($settings.ClipboardClearSeconds) seconds" -DotColor '#15803D' -TextColor '#166534'
+            $null = Update-ClipboardStatusForSelection
             Show-Toast -Message "Password copied for $($selected.DeviceName)." -Kind Success
         }
         catch {
@@ -1913,6 +1382,7 @@ function Complete-CredentialAction {
         }
     }
     else {
+        $script:RevealedSecretKind = 'LAPS'
         $PasswordText.Text = [string]$Credential.Password
         $RevealPasswordButton.Content = 'Hide now'
         Set-PasswordStatus -Message "Hides automatically in $($settings.RevealSeconds) seconds" -DotColor '#2563EB' -TextColor '#1D4ED8'
@@ -1935,7 +1405,7 @@ function Invoke-CredentialAction {
         return
     }
 
-    if ($Action -eq 'Reveal' -and $PasswordText.Text -ne '••••••••••••••••') {
+    if ($Action -eq 'Reveal' -and $script:RevealedSecretKind -eq 'LAPS') {
         Clear-SecretDisplay
         return
     }
@@ -1965,7 +1435,7 @@ function Invoke-CredentialAction {
     }
 
     if ($null -ne $script:CurrentCredential -and
-        [string]::Equals($script:CurrentCredentialDeviceId, [string]$selected.EntraDeviceId, [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$script:CurrentCredential.DeviceId, [string]$selected.EntraDeviceId, [StringComparison]::OrdinalIgnoreCase) -and
         (Get-SensitiveClockNow) -lt $script:CredentialExpiresAt) {
         Complete-CredentialAction -Action $Action -Credential $script:CurrentCredential
         return
@@ -1979,7 +1449,7 @@ function Invoke-CredentialAction {
     $script:PendingCredentialVerificationGeneration = [int]$VerificationGeneration
     Set-SecretActionBusy -Kind LAPS
     Set-AppStatus -Message "Retrieving the current password for $($selected.DeviceName)..." -Busy
-    $null = Start-GraphOperation -Name 'Credential' -ScriptText $credentialOperationScript -Arguments @([string]$selected.EntraDeviceId, $coreModulePath)
+    $null = Start-GraphOperation -Name 'Credential' -Arguments @([string]$selected.EntraDeviceId, $coreModulePath)
 }
 
 function Complete-BitLockerAction {
@@ -2002,15 +1472,15 @@ function Complete-BitLockerAction {
     }
 
     $script:CurrentBitLockerKey = $KeyResult
-    $script:CurrentBitLockerDeviceId = [string]$KeyResult.DeviceId
-    $script:CurrentBitLockerKeyId = [string]$KeyResult.RecoveryKeyId
-    $script:BitLockerExpiresAt = (Get-SensitiveClockNow).AddSeconds([int]$settings.RevealSeconds)
+    if ($script:RevealedSecretKind -ne 'BitLocker') {
+        $script:BitLockerExpiresAt = (Get-SensitiveClockNow).AddSeconds($settings.RevealSeconds)
+    }
     $CopyRecoveryKeyButtonText.Text = 'Copy recovery key'
 
     if ($Action -eq 'Copy') {
         try {
             Set-ProtectedClipboardText -Text $KeyResult.RecoveryKey -Kind BitLocker -DeviceId $selected.EntraDeviceId -RecoveryKeyId $selectedKey.Id
-            Set-BitLockerStatus -Message "Copied securely • clipboard clears in $($settings.ClipboardClearSeconds) seconds" -DotColor '#15803D' -TextColor '#166534'
+            $null = Update-ClipboardStatusForSelection
             Show-Toast -Message "BitLocker recovery key copied for $($selected.DeviceName)." -Kind Success
         }
         catch {
@@ -2018,6 +1488,7 @@ function Complete-BitLockerAction {
         }
     }
     else {
+        $script:RevealedSecretKind = 'BitLocker'
         $BitLockerKeyText.Text = [string]$KeyResult.RecoveryKey
         $RevealRecoveryKeyButton.Content = 'Hide now'
         Set-BitLockerStatus -Message "Hides automatically in $($settings.RevealSeconds) seconds" -DotColor '#2563EB' -TextColor '#1D4ED8'
@@ -2041,7 +1512,7 @@ function Invoke-BitLockerAction {
         return
     }
 
-    if ($Action -eq 'Reveal' -and $BitLockerKeyText.Text -notlike '••••••-*') {
+    if ($Action -eq 'Reveal' -and $script:RevealedSecretKind -eq 'BitLocker') {
         Clear-SecretDisplay
         Update-BitLockerSelection
         return
@@ -2072,8 +1543,8 @@ function Invoke-BitLockerAction {
     }
 
     if ($null -ne $script:CurrentBitLockerKey -and
-        [string]::Equals($script:CurrentBitLockerDeviceId, [string]$selected.EntraDeviceId, [StringComparison]::OrdinalIgnoreCase) -and
-        [string]::Equals($script:CurrentBitLockerKeyId, [string]$selectedKey.Id, [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$script:CurrentBitLockerKey.DeviceId, [string]$selected.EntraDeviceId, [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$script:CurrentBitLockerKey.RecoveryKeyId, [string]$selectedKey.Id, [StringComparison]::OrdinalIgnoreCase) -and
         (Get-SensitiveClockNow) -lt $script:BitLockerExpiresAt) {
         Complete-BitLockerAction -Action $Action -KeyResult $script:CurrentBitLockerKey
         return
@@ -2087,7 +1558,7 @@ function Invoke-BitLockerAction {
     $script:PendingBitLockerVerificationGeneration = [int]$VerificationGeneration
     Set-SecretActionBusy -Kind BitLocker
     Set-AppStatus -Message "Retrieving a BitLocker recovery key for $($selected.DeviceName)..." -Busy
-    $null = Start-GraphOperation -Name 'BitLockerKey' -ScriptText $bitLockerKeyOperationScript -Arguments @(
+    $null = Start-GraphOperation -Name 'BitLockerKey' -Arguments @(
         [string]$selected.EntraDeviceId,
         [string]$selectedKey.Id,
         $coreModulePath
@@ -2527,7 +1998,7 @@ $CopyAccountButton.Add_Click({
     if (-not [string]::IsNullOrWhiteSpace($AccountNameText.Text) -and $AccountNameText.Text -ne 'Retrieved with password') {
         try {
             Set-ProtectedClipboardText -Text $AccountNameText.Text -Kind Account -ClearSeconds 20
-            if ($PasswordText.Text -eq '••••••••••••••••') {
+            if ($script:RevealedSecretKind -ne 'LAPS') {
                 Set-PasswordStatus -Message 'Password remains hidden until requested'
             }
             Show-Toast -Message 'Local administrator username copied.' -Kind Success
@@ -2588,7 +2059,7 @@ $window.Add_PreviewKeyDown({
     }
     elseif ($eventArgs.Key -eq [System.Windows.Input.Key]::Escape) {
         Cancel-PendingRecoveryAction
-        if ($PasswordText.Text -ne '••••••••••••••••' -or $BitLockerKeyText.Text -notlike '••••••-*') {
+        if ($null -ne $script:RevealedSecretKind) {
             $selected = Get-SelectedDevice
             $preserveLapsStatus = $script:ClipboardKind -eq 'LAPS' -and $null -ne $selected -and
                 [string]::Equals([string]$selected.EntraDeviceId, [string]$script:ClipboardDeviceId, [StringComparison]::OrdinalIgnoreCase) -and
@@ -2642,10 +2113,10 @@ $pollTimer.Add_Tick({
             $selected = Get-SelectedDevice
             if ($null -ne $selected -and [string]::Equals([string]$selected.EntraDeviceId, $clipboardDeviceId, [StringComparison]::OrdinalIgnoreCase)) {
                 $message = if ($clipboardCleared) { 'Protected clipboard cleared' } else { 'Clipboard content was replaced' }
-                if ($clipboardKind -eq 'LAPS' -and $PasswordText.Text -eq '••••••••••••••••') {
+                if ($clipboardKind -eq 'LAPS' -and $script:RevealedSecretKind -ne 'LAPS') {
                     Set-PasswordStatus -Message $message -DotColor '#64748B'
                 }
-                elseif ($clipboardKind -eq 'BitLocker' -and $BitLockerKeyText.Text -like '••••••-*' -and
+                elseif ($clipboardKind -eq 'BitLocker' -and $script:RevealedSecretKind -ne 'BitLocker' -and
                     $null -ne $BitLockerKeySelector.SelectedItem -and
                     [string]::Equals([string]$BitLockerKeySelector.SelectedItem.Id, $clipboardRecoveryKeyId, [StringComparison]::OrdinalIgnoreCase)) {
                     Set-BitLockerStatus -Message $message -DotColor '#64748B'
@@ -2661,7 +2132,7 @@ $pollTimer.Add_Tick({
         Clear-SecretDisplay -PreservePasswordStatus:$preserveClipboardStatus
         if ($preserveClipboardStatus) { $null = Update-ClipboardStatusForSelection }
     }
-    elseif ($PasswordText.Text -ne '••••••••••••••••' -and $script:CredentialExpiresAt -ne [DateTimeOffset]::MinValue) {
+    elseif ($script:RevealedSecretKind -eq 'LAPS' -and $script:CredentialExpiresAt -ne [DateTimeOffset]::MinValue) {
         $seconds = [Math]::Max(0, [Math]::Ceiling(($script:CredentialExpiresAt - $now).TotalSeconds))
         $message = "Hides automatically in $seconds seconds"
         if ($PasswordCountdownText.Text -ne $message) { $PasswordCountdownText.Text = $message }
@@ -2674,7 +2145,7 @@ $pollTimer.Add_Tick({
         Clear-SecretDisplay -PreserveBitLockerStatus:$preserveClipboardStatus
         if ($preserveClipboardStatus) { $null = Update-ClipboardStatusForSelection }
     }
-    elseif ($BitLockerKeyText.Text -notlike '••••••-*' -and $script:BitLockerExpiresAt -ne [DateTimeOffset]::MinValue) {
+    elseif ($script:RevealedSecretKind -eq 'BitLocker' -and $script:BitLockerExpiresAt -ne [DateTimeOffset]::MinValue) {
         $seconds = [Math]::Max(0, [Math]::Ceiling(($script:BitLockerExpiresAt - $now).TotalSeconds))
         $message = "Hides automatically in $seconds seconds"
         if ($BitLockerCountdownText.Text -ne $message) { $BitLockerCountdownText.Text = $message }

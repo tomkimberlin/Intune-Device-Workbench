@@ -1,28 +1,27 @@
 # Production auth worker with synthetic SDK commands only. Never loads Graph,
 # touches its secure cache, requests a sign-in, or contacts a tenant.
 & {
-    $authNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$authOperationScript'},$true)
-    $worker=[scriptblock]::Create($authNode.Right.Expression.Value)
+    $worker = Join-Path $productionOperations 'Authenticate.ps1'
     function Import-Module { param($Name,$MinimumVersion,[switch]$Force,$ErrorAction) }
     function Set-MgRequestContext { param($ClientTimeout,$MaxRetry) }
     function Disconnect-MgGraph { throw 'Tests must never clear the reusable Graph sign-in.' }
     function Get-MgContext {
-        if ($script:AuthFixture.Mode -eq 'Missing' -and $script:AuthFixture.Connects -eq 0) { return $null }
+        if ($authFixture.Mode -eq 'Missing' -and $authFixture.Connects -eq 0) { return $null }
         [pscustomobject]@{
             AuthType='Delegated'; TenantId='11111111-1111-4111-8111-111111111111'; Scopes=@('Device.Read.All')
-            Account=$(if($script:AuthFixture.Mode -eq 'WrongAccount'){'other@contoso.com'}else{'admin@contoso.com'})
+            Account=$(if($authFixture.Mode -eq 'WrongAccount'){'other@contoso.com'}else{'admin@contoso.com'})
         }
     }
     function Connect-MgGraph {
         param($TenantId,$Scopes,$ContextScope,$ClientTimeout,[switch]$UseDeviceCode,[switch]$NoWelcome,$ErrorAction)
-        $script:AuthFixture.Connects++
-        $script:AuthFixture.ConnectionArguments=@{Scopes=@($Scopes);ContextScope=$ContextScope;UseDeviceCode=[bool]$UseDeviceCode}
+        $authFixture.Connects++
+        $authFixture.ConnectionArguments=@{Scopes=@($Scopes);ContextScope=$ContextScope;UseDeviceCode=[bool]$UseDeviceCode}
     }
     function Invoke-MgGraphRequest {
         param($Method,$Uri,$OutputType,$ErrorAction)
-        $script:AuthFixture.Probes++
-        $script:AuthFixture.Uri=$Uri
-        switch ($script:AuthFixture.Mode) {
+        $authFixture.Probes++
+        $authFixture.Uri=$Uri
+        switch ($authFixture.Mode) {
             'NoContent' { return }
             'EmptyTenant' { return [pscustomobject]@{ value=@() } }
             'Incomplete' { return [pscustomobject]@{ value=@([pscustomobject]@{ displayName='DEMO-DEVICE-PROBE' }) } }
@@ -49,18 +48,18 @@
         @{Mode='Auth400';Kind='Error';Connects=1;Probes=1;Category='Authentication'}
         @{Mode='WrongAccount';Kind='Error';Connects=1;Probes=0;Category='Authentication'}
     )) {
-        $script:AuthFixture=@{Mode=$case.Mode;Connects=0;Probes=0;Uri=''}
+        $authFixture=@{Mode=$case.Mode;Connects=0;Probes=0;Uri=''}
         $result=@(& $worker 'contoso.com' '11111111-1111-4111-8111-111111111111' 'admin@contoso.com' @('Device.Read.All') 'unused fixture' '2.38.0')
-        Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq $case.Kind -and $script:AuthFixture.Connects -eq $case.Connects -and $script:AuthFixture.Probes -eq $case.Probes) -Name "Reconnect requires a live response and reconnects only once when needed: $($case.Mode)"
+        Assert-True -Condition ($result.Count -eq 1 -and $result[0].Kind -eq $case.Kind -and $authFixture.Connects -eq $case.Connects -and $authFixture.Probes -eq $case.Probes) -Name "Reconnect requires a live response and reconnects only once when needed: $($case.Mode)"
         if($case.Kind -eq 'AuthResult') {
-            Assert-True -Condition ([bool]$result[0].ConnectionVerified -and $script:AuthFixture.Uri -eq 'https://graph.microsoft.com/v1.0/devices?$select=id&$top=1') -Name "Connection success is backed by a metadata-only probe: $($case.Mode)"
+            Assert-True -Condition ([bool]$result[0].ConnectionVerified -and $authFixture.Uri -eq 'https://graph.microsoft.com/v1.0/devices?$select=id&$top=1') -Name "Connection success is backed by a metadata-only probe: $($case.Mode)"
         }
         else {
             $failure=$result[0]
             Assert-Equal -Actual (Get-GraphFailureCategory -ErrorCode $failure.ErrorCode -Message $failure.Message -StatusCode $failure.StatusCode) -Expected $case.Category -Name "Nested SDK errors retain their real failure category: $($case.Mode)"
         }
         if($case.Connects -gt 0) {
-            Assert-True -Condition ($script:AuthFixture.ConnectionArguments.ContextScope -eq 'CurrentUser' -and $script:AuthFixture.ConnectionArguments.UseDeviceCode -and ($script:AuthFixture.ConnectionArguments.Scopes -join ',') -eq 'Device.Read.All') -Name "Reconnect preserves the configured scopes and reusable cache: $($case.Mode)"
+            Assert-True -Condition ($authFixture.ConnectionArguments.ContextScope -eq 'CurrentUser' -and $authFixture.ConnectionArguments.UseDeviceCode -and ($authFixture.ConnectionArguments.Scopes -join ',') -eq 'Device.Read.All') -Name "Reconnect preserves the configured scopes and reusable cache: $($case.Mode)"
         }
     }
 }

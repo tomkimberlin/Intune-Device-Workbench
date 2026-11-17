@@ -1,51 +1,45 @@
 # Run the actual authentication operation in an isolated runspace. Replace only
 # the SDK boundary; no installed Graph module, cached credentials, or tenant is used.
 & {
-    $authNode = $mainAst.Find({
-        param($node)
-        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
-        $node.Left.Extent.Text -eq '$authOperationScript'
-    }, $true)
+    $authPath = Join-Path $productionOperations 'Authenticate.ps1'
 
     function Invoke-AuthenticationFixture {
         param([string]$Scenario)
         $worker = [PowerShell]::Create()
         try {
             $null = $worker.AddScript({
-                param($OperationText, $ModulePath, $Scenario)
-                $script:ConnectCalls = 0
-                $script:ConnectArguments = $null
-                $script:SessionUsable = $Scenario -eq 'Cached'
-                $script:Context = [pscustomobject]@{
+                param($OperationPath, $ModulePath, $Scenario)
+                $authFixture = @{ ConnectCalls=0; ConnectArguments=$null; SessionUsable=($Scenario -eq 'Cached') }
+                $authFixture.Context = [pscustomobject]@{
                     Account = 'admin@contoso.com'
                     TenantId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
                     AuthType = 'Delegated'
                     Scopes = @('Device.Read.All', 'DeviceManagementManagedDevices.Read.All')
                 }
-                if ($Scenario -eq 'FirstSignIn') { $script:Context = $null }
+                if ($Scenario -eq 'FirstSignIn') { $authFixture.Context = $null }
                 function Import-Module {
                     param($Name, [switch]$Force, $MinimumVersion, $ErrorAction)
                     if ($Name -eq 'Microsoft.Graph.Authentication') { return }
                     Microsoft.PowerShell.Core\Import-Module -Name $Name -Force:$Force -ErrorAction Stop
                 }
-                function Get-MgContext { $script:Context }
+                function Get-MgContext { $authFixture.Context }
                 function Set-MgRequestContext { param($ClientTimeout,$MaxRetry) }
                 function Invoke-MgGraphRequest {
                     param($Method,$Uri,$OutputType,$ErrorAction)
-                    if(-not $script:SessionUsable) { throw 'Synthetic session was not authenticated.' }
+                    if(-not $authFixture.SessionUsable) { throw 'Synthetic session was not authenticated.' }
                     [pscustomobject]@{value=@([pscustomobject]@{id='11111111-1111-4111-8111-111111111111'})}
                 }
                 function Connect-MgGraph {
                     param($TenantId, [switch]$UseDeviceCode, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, $ErrorAction)
-                    $script:ConnectCalls++
-                    $script:ConnectArguments = @{
+                    $authFixture.ConnectCalls++
+                    $authFixture.ConnectArguments = @{
                         TenantId = $TenantId; UseDeviceCode = [bool]$UseDeviceCode
                         Scopes = @($Scopes); ContextScope = $ContextScope
                     }
                     if ($Scenario -eq 'AuthenticationFails') {
                         throw [Net.Http.HttpRequestException]::new('Synthetic expired sign-in', $null, [Net.HttpStatusCode]::Unauthorized)
                     }
-                    $script:Context = [pscustomobject]@{
+                    $authFixture.Context = [pscustomobject]@{
                         Account = 'admin@contoso.com'
                         TenantId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
                         AuthType = 'Delegated'
@@ -56,22 +50,22 @@
                         if ($Scenario -eq 'InformationPrompt') { Write-Host $prompt } else { $prompt }
                     }
                     switch ($Scenario) {
-                        'WrongAccount' { $script:Context.Account = 'other@contoso.com' }
-                        'WrongTenant' { $script:Context.TenantId = '11111111-1111-4111-8111-111111111111' }
-                        'MissingScopes' { $script:Context.Scopes = @('Device.Read.All') }
-                        'NotDelegated' { $script:Context.AuthType = 'AppOnly' }
+                        'WrongAccount' { $authFixture.Context.Account = 'other@contoso.com' }
+                        'WrongTenant' { $authFixture.Context.TenantId = '11111111-1111-4111-8111-111111111111' }
+                        'MissingScopes' { $authFixture.Context.Scopes = @('Device.Read.All') }
+                        'NotDelegated' { $authFixture.Context.AuthType = 'AppOnly' }
                     }
-                    $script:SessionUsable = $true
+                    $authFixture.SessionUsable = $true
                 }
-                $output = @(& ([scriptblock]::Create($OperationText)) 'contoso.onmicrosoft.com' 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' 'admin@contoso.com' @('Device.Read.All', 'DeviceManagementManagedDevices.Read.All') $ModulePath '2.38.0')
+                $output = @(& $OperationPath 'contoso.onmicrosoft.com' 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' 'admin@contoso.com' @('Device.Read.All', 'DeviceManagementManagedDevices.Read.All') $ModulePath '2.38.0')
                 [pscustomobject]@{
                     Results = @($output | Where-Object { $_.PSObject.Properties['Kind'] })
                     Codes = @($output | ForEach-Object { Get-DeviceCodeFromMessage -Message $_ } | Where-Object { $null -ne $_ })
-                    ConnectCalls = $script:ConnectCalls
-                    ConnectArguments = $script:ConnectArguments
-                    SessionUsable = $script:SessionUsable
+                    ConnectCalls = $authFixture.ConnectCalls
+                    ConnectArguments = $authFixture.ConnectArguments
+                    SessionUsable = $authFixture.SessionUsable
                 }
-            }).AddArgument($authNode.Right.Expression.Value).AddArgument($modulePath).AddArgument($Scenario)
+            }).AddArgument($authPath).AddArgument($modulePath).AddArgument($Scenario)
             $output = @($worker.Invoke())
             if ($worker.HadErrors) { throw 'Authentication fixture failed outside the operation result path.' }
             return $output[0]
