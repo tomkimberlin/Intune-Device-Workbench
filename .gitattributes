@@ -14,3 +14,4 @@ LICENSE text eol=lf
 *.png binary
 *.ico binary
 *.svg text eol=lf
+*.xaml text eol=lf

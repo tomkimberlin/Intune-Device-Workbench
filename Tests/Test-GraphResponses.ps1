@@ -19,7 +19,27 @@
                         $failure | Add-Member -NotePropertyName Response -NotePropertyValue ([Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]$StatusCode))
                         throw $failure
                     }
-                    if ($Scenario -eq 'ValidInventory') {
+                    if ($Scenario -eq 'Reenrollment') {
+                        if ($Uri -like '*/managedDevices?*') {
+                            $records = foreach ($index in 1..41) {
+                                [pscustomobject]@{
+                                    id = '11111111-1111-4111-8111-{0:d12}' -f $index
+                                    azureADDeviceId = if ($index % 2) { '{33333333-3333-4333-8333-333333333333}' } else { '33333333333343338333333333333333' }
+                                    deviceName = 'DEMO-DEVICE-REENROLLED'
+                                    operatingSystem = 'Windows'
+                                    lastSyncDateTime = [DateTimeOffset]::UnixEpoch.AddDays($index)
+                                }
+                            }
+                            return [pscustomobject]@{ value=$records }
+                        }
+                        if ($Uri -like '*/$batch') {
+                            $requests = ($Body | ConvertFrom-Json).requests
+                            if ($requests.Count -ne 1 -or $requests[0].url -notlike '*/11111111-1111-4111-8111-000000000041/users?*') {
+                                throw 'A superseded enrollment was included in the primary-user lookup.'
+                            }
+                        }
+                    }
+                    if ($Scenario -in @('ValidInventory','Reenrollment')) {
                         switch -Wildcard ($Uri) {
                             '*/managedDevices?*' { return ('{"value":[{"id":"11111111-1111-4111-8111-111111111111","azureADDeviceId":"33333333-3333-4333-8333-333333333333","deviceName":"DEMO-DEVICE-VALID","operatingSystem":"Windows"}]}' | ConvertFrom-Json) }
                             '*/$batch' { return ('{"responses":[{"id":"1","status":200,"body":{"value":[{"id":"44444444-4444-4444-8444-444444444444","displayName":"Demo User","userPrincipalName":"demo@contoso.com"}]}}]}' | ConvertFrom-Json) }
@@ -82,6 +102,13 @@
     $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' 'ValidInventory'
     $rows = @($fixture.Results[0].Devices)
     Assert-True -Condition ($fixture.Results.Count -eq 1 -and $fixture.Results[0].Kind -eq 'InventoryResult' -and $fixture.Calls.Count -eq 5 -and $rows.Count -eq 1 -and $rows[0].PrimaryUser -eq 'Demo User' -and $rows[0].LapsAvailable -and $rows[0].BitLockerKeyCount -eq 1) -Name 'Valid JSON collections still merge one device with its actual primary user and recovery metadata'
+
+    $fixture = Invoke-GraphResponseFixture 'inventoryOperationScript' 'Reenrollment'
+    $result = $fixture.Results[0]
+    Assert-True -Condition ($result.Kind -eq 'InventoryResult' -and $result.Devices.Count -eq 1 -and
+        $result.Devices[0].EntraDeviceId -eq '33333333-3333-4333-8333-333333333333' -and
+        $result.Devices[0].PrimaryUser -eq 'Demo User' -and $result.Devices[0].LapsAvailable -and
+        $result.Devices[0].BitLockerKeyCount -eq 1 -and $fixture.Calls.Count -eq 5) -Name '41 enrollments with equivalent GUIDs produce one primary-user lookup and one joined recovery row'
 
     foreach ($operationName in @('inventoryOperationScript', 'credentialOperationScript', 'bitLockerKeyOperationScript')) {
         foreach ($status in @(401, 403, 404, 429, 503)) {

@@ -2,10 +2,7 @@
 # No visible window, input injection, sleep/resume, or live process modification.
 & {
     Add-Type -AssemblyName PresentationFramework
-    $xaml=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true).Right.Expression.Value
-    $reader=[Xml.XmlNodeReader]::new([xml]$xaml)
-    $scrollWindow=[Windows.Markup.XamlReader]::Load($reader)
-    $reader.Close()
+    $scrollWindow=[Windows.Markup.XamlReader]::Parse($windowMarkup)
     $DeviceGrid=$scrollWindow.FindName('DeviceGrid')
     $items=@(1..100 | ForEach-Object {[pscustomobject]@{DeviceName=('DEMO-DEVICE-{0:000}' -f $_);PrimaryUser='Synthetic';Model='Fixture'}})
     $DeviceGrid.ItemsSource=$items

@@ -6,10 +6,7 @@
     foreach ($name in @('Initialize-GraphWorker','Start-GraphOperation','Stop-InventoryLoad','Start-InventoryLoad','Set-InventoryLoadingState','Reset-InventoryControls','Complete-GraphOperation','Get-OperationResultObject','Process-OperationOutput','Restore-SecretActionControls','Set-SecretActionBusy','Update-OperationControls','Cancel-PendingRecoveryAction','Set-RecoveryTab','Complete-LocalSecretVerification','Request-SecretAction')) {
         . ([scriptblock]::Create($mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true).Extent.Text))
     }
-    $xamlNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true)
-    $reader=[System.Xml.XmlNodeReader]::new([xml]$xamlNode.Right.Expression.Value)
-    $testWindow=[System.Windows.Markup.XamlReader]::Load($reader)
-    $reader.Close()
+    $testWindow=[System.Windows.Markup.XamlReader]::Parse($windowMarkup)
     $namesNode=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$controlNames'},$true)
     . ([scriptblock]::Create($namesNode.Extent.Text))
     foreach ($name in $controlNames) { Set-Variable -Name $name -Value $testWindow.FindName($name) }
@@ -158,6 +155,17 @@ function Invoke-MgGraphRequest {
         Wait-WorkflowFixture
         Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowRevocations -eq $revocationsBefore + 1 -and $script:WorkflowSecretClears -eq $clearsBefore + 1 -and $script:WorkflowStatus -like '*requires you to sign in again*' -and $script:WorkflowApplied -eq 3) -Name 'An SDK-shaped 401 revokes recovery verification, clears displayed secrets, and requires sign-in without replacing inventory'
         Assert-True -Condition ($SignInButton.IsEnabled -and $RefreshButton.IsEnabled -and -not $CopyPasswordButton.IsEnabled -and -not $CopyRecoveryKeyButton.IsEnabled) -Name 'Expired sign-in leaves reconnect available while recovery actions are disabled'
+        $script:IsSignedIn=$true
+        Start-InventoryLoad
+        if (-not $script:CurrentOperation.AsyncResult.AsyncWaitHandle.WaitOne(3000)) { throw 'The synthetic 401 timed out.' }
+        Stop-InventoryLoad
+        Wait-WorkflowFixture
+        Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowStatus -like '*sign in again*' -and
+            $script:WorkflowApplied -eq 3 -and -not $CopyPasswordButton.IsEnabled) -Name 'Canceling after a Graph rejection retains inventory and revokes recovery access'
+
+        $null = Start-GraphOperation -Name Authenticate -ScriptText "[pscustomobject]@{Kind='AuthResult';Account='admin@contoso.com';ConnectionVerified='False'}"
+        Wait-WorkflowFixture
+        Assert-True -Condition (-not $script:IsSignedIn -and $script:WorkflowApplied -eq 3 -and $script:WorkflowStatus -like '*not verified*') -Name 'Only a verified boolean success can enable recovery'
         $script:IsSignedIn=$true
         $inventoryOperationScript=@'
 param($CoreModulePath)

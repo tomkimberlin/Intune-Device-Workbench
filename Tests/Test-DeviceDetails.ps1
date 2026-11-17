@@ -43,12 +43,14 @@
     }
 
     # Execute the actual event function against the native-call shim, not the user's clipboard.
-    $copyAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Copy-SelectedDeviceDetails'},$true)
-    $copySource=$copyAst.Extent.Text.Replace('[M365Workbench.Security.SecureClipboard]','[M365Workbench.TestDoubles.SecureClipboard]').Replace('([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle','[IntPtr]1')
-    . ([scriptblock]::Create($copySource))
+    $windowHandle = [IntPtr]1
+    foreach ($name in @('Set-ProtectedClipboardText','Copy-SelectedDeviceDetails','Set-DeviceCode','Clear-AuthenticationClipboard')) {
+        $functionAst = $mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+        . ([scriptblock]::Create($functionAst.Extent.Text.Replace('[M365Workbench.Security.SecureClipboard]','[M365Workbench.TestDoubles.SecureClipboard]')))
+    }
     $accountAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -eq '$CopyAccountButton' -and $n.Member.Extent.Text -eq 'Add_Click'},$true)
     $accountBody=$accountAst.Arguments[0].ScriptBlock.Extent.Text
-    $accountCopy=[scriptblock]::Create($accountBody.Substring(1,$accountBody.Length-2).Replace('[M365Workbench.Security.SecureClipboard]','[M365Workbench.TestDoubles.SecureClipboard]').Replace('([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle','[IntPtr]1'))
+    $accountCopy=[scriptblock]::Create($accountBody.Substring(1,$accountBody.Length-2))
     $AccountNameText=[pscustomobject]@{Text='DemoLapsAdmin'}
     function Set-PasswordStatus { param($Message) }
     $selected=$device
@@ -116,6 +118,26 @@
     $before=[M365Workbench.TestDoubles.SecureClipboard]::EmptyCount
     [M365Workbench.TestDoubles.SecureClipboard]::ReplaceClipboard()
     Assert-True -Condition (-not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged() -and [M365Workbench.TestDoubles.SecureClipboard]::EmptyCount -eq $before) -Name 'Details cleanup cannot erase clipboard content subsequently written by another app'
+
+    $settings.ExpectedAccount = 'admin@contoso.com'
+    $AuthOverlayStatus = [Windows.Controls.TextBlock]::new()
+    $DeviceCodeText = [Windows.Controls.TextBlock]::new()
+    $CopyCodeButton = [Windows.Controls.Button]::new()
+    $OpenSignInButton = [Windows.Controls.Button]::new()
+    $CancelVerificationButton = [Windows.Controls.Button]::new()
+    $script:SignInPageOpenedForCode = $null
+    function Set-LiveStatusText { param($Control,$Message) $Control.Text=$Message }
+    function Open-DeviceSignInPage { }
+    Set-DeviceCode -Code 'A1B2C3D4E'
+    Assert-True -Condition ($script:ClipboardKind -eq 'DeviceCode' -and $script:ClipboardClearAt -eq $script:DetailsClock.AddSeconds(45) -and
+        [M365Workbench.TestDoubles.SecureClipboard]::LastText -eq $DeviceCodeText.Text) -Name 'Automatic device-code copying uses the configured clipboard lifetime'
+    $script:DetailsClock = $script:DetailsClock.AddSeconds(44)
+    $copyCodeAst = $mainAst.Find({param($n) $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -eq '$CopyCodeButton' -and $n.Member.Extent.Text -eq 'Add_Click'},$true)
+    & ($copyCodeAst.Arguments[0].ScriptBlock.GetScriptBlock())
+    Assert-True -Condition ($script:ClipboardKind -eq 'DeviceCode' -and $script:ClipboardClearAt -eq $script:DetailsClock.AddSeconds(45)) -Name 'Copy code again starts its own deadline'
+    Clear-AuthenticationClipboard
+    Assert-True -Condition ($DeviceCodeText.Text -eq '' -and $null -eq $script:LastDeviceCode -and -not $CopyCodeButton.IsEnabled -and
+        $null -eq $script:ClipboardKind -and -not [M365Workbench.TestDoubles.SecureClipboard]::ClearIfUnchanged()) -Name 'Finishing sign-in clears the displayed code, copy action and clipboard ownership'
 }
 
 # Compatibility aliases must forward the same CLI contract to the renamed implementation.
@@ -132,10 +154,8 @@
 
 # Real WPF layout and accessibility metadata, without showing a window or writing the clipboard.
 & {
-    $xamlAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true)
     foreach ($size in @(@(1100,680),@(1280,780),@(1600,900))) {
-        $reader=[System.Xml.XmlNodeReader]::new([xml]$xamlAst.Right.Expression.Value)
-        $layoutWindow=[System.Windows.Markup.XamlReader]::Load($reader); $reader.Close()
+        $layoutWindow=[System.Windows.Markup.XamlReader]::Parse($windowMarkup)
         try {
             $layoutWindow.FindName('DetailPanel').Visibility='Visible'
             $layoutWindow.FindName('NoSelectionPanel').Visibility='Collapsed'

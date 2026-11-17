@@ -15,6 +15,7 @@ namespace M365Workbench.Security
     {
         private const uint CfUnicodeText = 13;
         private const uint GmemMoveable = 0x0002;
+        private const uint GmemZeroInit = 0x0040;
         private const string ExcludeFormatName = "ExcludeClipboardContentFromMonitorProcessing";
         private const string HistoryFormatName = "CanIncludeInClipboardHistory";
         private const string CloudFormatName = "CanUploadToCloudClipboard";
@@ -45,6 +46,9 @@ namespace M365Workbench.Security
         private static extern IntPtr GetClipboardData(uint uFormat);
 
         [DllImport("user32.dll")]
+        private static extern bool IsClipboardFormatAvailable(uint format);
+
+        [DllImport("user32.dll")]
         private static extern bool IsWindow(IntPtr hWnd);
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -71,9 +75,9 @@ namespace M365Workbench.Security
 
         public static void SetSensitiveText(string text, IntPtr ownerWindow)
         {
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(text) || text.IndexOf('\0') >= 0)
             {
-                throw new ArgumentException("Clipboard text cannot be empty.", nameof(text));
+                throw new ArgumentException("Clipboard text must be nonempty and contain no embedded NUL.", nameof(text));
             }
             if (ownerWindow == IntPtr.Zero || !IsWindow(ownerWindow))
             {
@@ -84,18 +88,25 @@ namespace M365Workbench.Security
             byte[] ownershipMarker = null;
             lock (Gate)
             {
+                uint excludeFormat = RegisterRequiredFormat(ExcludeFormatName);
+                uint historyFormat = RegisterRequiredFormat(HistoryFormatName);
+                uint cloudFormat = RegisterRequiredFormat(CloudFormatName);
                 OpenClipboardWithRetry(ownerWindow);
+                bool emptied = false;
                 try
                 {
+                    ownershipMarker = RandomNumberGenerator.GetBytes(16);
+                    // The zero-filled extra WCHAR terminates CF_UNICODETEXT without
+                    // allocating a second immutable string containing the secret.
+                    textBytes = new byte[checked(Encoding.Unicode.GetByteCount(text) + sizeof(char))];
+                    Encoding.Unicode.GetBytes(text, 0, text.Length, textBytes, 0);
                     if (!EmptyClipboard())
                     {
                         throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to clear the clipboard.");
                     }
 
-                    ownershipMarker = RandomNumberGenerator.GetBytes(16);
-                    uint excludeFormat = RegisterRequiredFormat(ExcludeFormatName);
-                    uint historyFormat = RegisterRequiredFormat(HistoryFormatName);
-                    uint cloudFormat = RegisterRequiredFormat(CloudFormatName);
+                    emptied = true;
+                    ForgetOwnership();
 
                     // Any payload in ExcludeClipboardContentFromMonitorProcessing opts the
                     // entire clipboard item out. The DWORD zero markers provide a second,
@@ -104,21 +115,19 @@ namespace M365Workbench.Security
                     SetClipboardBytes(historyFormat, new byte[] { 0, 0, 0, 0 });
                     SetClipboardBytes(cloudFormat, new byte[] { 0, 0, 0, 0 });
 
-                    textBytes = Encoding.Unicode.GetBytes(text + '\0');
                     SetClipboardBytes(CfUnicodeText, textBytes);
                     // Windows can synthesize text formats during CloseClipboard and advance
                     // its sequence number. Bind cleanup to this item's non-secret marker
                     // instead, then check it with the clipboard locked before deleting.
-                    ForgetOwnership();
                     _ownedMarker = ownershipMarker;
                     ownershipMarker = null;
                     _ownerWindow = ownerWindow;
                 }
                 catch
                 {
-                    // Fail closed if Windows cannot attach the protection formats.
-                    EmptyClipboard();
-                    ForgetOwnership();
+                    // Remove a partial new item. If the original empty failed,
+                    // the previous item and its pending cleanup still belong together.
+                    if (emptied) EmptyClipboard();
                     throw;
                 }
                 finally
@@ -197,8 +206,16 @@ namespace M365Workbench.Security
             if (GetClipboardOwner() != _ownerWindow)
                 return false;
 
-            IntPtr handle = GetClipboardData(RegisterRequiredFormat(ExcludeFormatName));
-            if (handle == IntPtr.Zero || GlobalSize(handle).ToUInt64() < (ulong)_ownedMarker.Length)
+            uint format = RegisterRequiredFormat(ExcludeFormatName);
+            if (!IsClipboardFormatAvailable(format))
+                return false;
+            IntPtr handle = GetClipboardData(format);
+            if (handle == IntPtr.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to read clipboard ownership.");
+            ulong size = GlobalSize(handle).ToUInt64();
+            if (size == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to inspect clipboard ownership.");
+            if (size < (ulong)_ownedMarker.Length)
                 return false;
 
             IntPtr pointer = GlobalLock(handle);
@@ -245,7 +262,7 @@ namespace M365Workbench.Security
             IntPtr pointer = IntPtr.Zero;
             try
             {
-                handle = GlobalAlloc(GmemMoveable, (UIntPtr)bytes.Length);
+                handle = GlobalAlloc(GmemMoveable | GmemZeroInit, (UIntPtr)bytes.Length);
                 if (handle == IntPtr.Zero)
                 {
                     throw new OutOfMemoryException("Unable to allocate clipboard memory.");
@@ -291,7 +308,7 @@ namespace M365Workbench.Security
                     return;
                 }
 
-                Thread.Sleep(20 + (attempt * 15));
+                if (attempt < 7) Thread.Sleep(20 + (attempt * 15));
             }
 
             throw new Win32Exception(Marshal.GetLastWin32Error(), "The clipboard is busy. Please try again.");

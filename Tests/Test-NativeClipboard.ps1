@@ -76,16 +76,15 @@ public static class SmokeClipboardInspection {
 $tokens=$null; $parseErrors=$null
 $mainAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $AppRoot 'IntuneDeviceWorkbench.ps1'),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Source did not parse'}
-foreach($functionName in @('Get-SensitiveClockNow','Get-DemoInventory','Clear-SecretDisplay','Update-ClipboardStatusForSelection','Copy-SelectedDeviceDetails','Complete-CredentialAction','Invoke-CredentialAction','Complete-BitLockerAction','Invoke-BitLockerAction')) {
+foreach($functionName in @('Get-SensitiveClockNow','Get-DemoInventory','Clear-SecretDisplay','Update-ClipboardStatusForSelection','Set-ProtectedClipboardText','Copy-SelectedDeviceDetails','Complete-CredentialAction','Invoke-CredentialAction','Complete-BitLockerAction','Invoke-BitLockerAction')) {
  $functionAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $functionName},$true)
  . ([scriptblock]::Create($functionAst.Extent.Text))
 }
 # Off-screen controls and a real native owner HWND; no live UI automation or Graph.
-$xamlAst=$mainAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$xaml'},$true)
-$reader=[Xml.XmlNodeReader]::new([xml]$xamlAst.Right.Expression.Value)
-$window=[Windows.Markup.XamlReader]::Load($reader); $reader.Close()
-foreach($match in [regex]::Matches($xamlAst.Right.Expression.Value,'x:Name="([^"]+)"')) {Set-Variable -Name $match.Groups[1].Value -Value $window.FindName($match.Groups[1].Value)}
-$null=([Windows.Interop.WindowInteropHelper]::new($window)).EnsureHandle()
+$windowMarkup = [IO.File]::ReadAllText((Join-Path $AppRoot 'assets\WorkbenchWindow.xaml'))
+$window=[Windows.Markup.XamlReader]::Parse($windowMarkup)
+foreach($match in [regex]::Matches($windowMarkup,'x:Name="([^"]+)"')) {Set-Variable -Name $match.Groups[1].Value -Value $window.FindName($match.Groups[1].Value)}
+$windowHandle=([Windows.Interop.WindowInteropHelper]::new($window)).EnsureHandle()
 $settings=@{ClipboardClearSeconds=45;RevealSeconds=20;ExpectedAccount='laps-admin@contoso.onmicrosoft.com'}
 $DemoMode=$true
 $script:SensitiveClockOrigin=[DateTimeOffset]::UtcNow
