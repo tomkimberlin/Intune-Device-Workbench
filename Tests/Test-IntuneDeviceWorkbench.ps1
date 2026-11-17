@@ -25,6 +25,7 @@ $visualPreviewTestPath = Join-Path $testRoot 'M365Workbench.Visual.Test.png'
 $authVisualPreviewTestPath = Join-Path $testRoot 'M365Workbench.AuthVisual.Test.png'
 $expectedAppUserModelId = 'M365Workbench.Desktop'
 
+$testFailure = $null
 try {
 Import-Module $modulePath -Force
 if ($null -eq ('M365Workbench.Security.SecureClipboard' -as [type])) {
@@ -563,13 +564,21 @@ $powerShell.Dispose()
 $runspace.Dispose()
 
 }
-finally {
-foreach ($generatedTestArtifact in @($launcherTestPath, $shortcutIdentityTestPath, $visualPreviewTestPath, $authVisualPreviewTestPath)) {
-    if (Test-Path -LiteralPath $generatedTestArtifact -PathType Leaf) {
-        Remove-Item -LiteralPath $generatedTestArtifact -Force
-    }
+catch {
+    $testFailure = $_
+    throw
 }
-Remove-Item -LiteralPath $testRoot -Force
+finally {
+    try {
+        foreach ($generatedTestArtifact in @($launcherTestPath, $shortcutIdentityTestPath, $visualPreviewTestPath, $authVisualPreviewTestPath)) {
+            [IO.File]::Delete($generatedTestArtifact)
+        }
+        [IO.Directory]::Delete($testRoot)
+    }
+    catch {
+        if ($null -eq $testFailure) { throw }
+        Write-Warning "Test cleanup could not remove $testRoot. $($_.Exception.Message)"
+    }
 }
 
 Write-Host ''
