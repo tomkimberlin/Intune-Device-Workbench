@@ -24,7 +24,8 @@
 
     $fixture = Join-Path $testRoot 'Launcher compatibility'
     $assets = Join-Path $fixture 'assets'
-    $marker = Join-Path $fixture 'started'
+    $marker = Join-Path $fixture 'started.pid'
+    $pendingMarker = Join-Path $fixture 'starting.pid'
     $scriptPath = Join-Path $fixture 'IntuneDeviceWorkbench.ps1'
     $launchFiles = @('Launch-IntuneDeviceWorkbench.cmd', 'Launch-M365Workbench.cmd', 'assets\M365Workbench.Launcher.cs')
     $process = $null
@@ -33,7 +34,11 @@
         foreach ($file in $launchFiles) { [IO.File]::Copy((Join-Path $appRoot $file), (Join-Path $fixture $file)) }
         [IO.File]::WriteAllText($scriptPath, @'
 if ($PSVersionTable.PSVersion -ge [version]'7.4' -and [Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA') {
-    $null = [IO.Directory]::CreateDirectory((Join-Path $PSScriptRoot 'started'))
+    $pending = Join-Path $PSScriptRoot 'starting.pid'
+    [IO.File]::WriteAllText($pending, [string]$PID)
+    [IO.File]::Move($pending, (Join-Path $PSScriptRoot 'started.pid'))
+    # Keep the child alive briefly so the test also covers a slow shutdown.
+    Start-Sleep -Milliseconds 250
 }
 '@)
         $start = [Diagnostics.ProcessStartInfo]::new((Join-Path ([Environment]::SystemDirectory) 'cmd.exe'), '/d /c Launch-M365Workbench.cmd')
@@ -47,16 +52,29 @@ if ($PSVersionTable.PSVersion -ge [version]'7.4' -and [Threading.Thread]::Curren
         $exited = $process.WaitForExit(20000)
         if (-not $exited) { $process.Kill($true); throw 'The compatibility launcher timed out.' }
         $deadline = [Diagnostics.Stopwatch]::StartNew()
-        while ($process.ExitCode -eq 0 -and -not [IO.Directory]::Exists($marker) -and $deadline.Elapsed.TotalSeconds -lt 10) {
+        while ($process.ExitCode -eq 0 -and -not [IO.File]::Exists($marker) -and $deadline.Elapsed.TotalSeconds -lt 10) {
             Start-Sleep -Milliseconds 50
         }
-        Assert-True -Condition ($process.ExitCode -eq 0 -and [IO.Directory]::Exists($marker)) -Name 'Both batch entry points launch the script from a path with spaces when the standard install paths are absent'
+        Assert-True -Condition ($process.ExitCode -eq 0 -and [IO.File]::Exists($marker)) -Name 'Both batch entry points launch the script from a path with spaces when the standard install paths are absent'
+        if ([IO.File]::Exists($marker)) {
+            # The batch process has exited. Its PowerShell child can still own the
+            # fixture as its working directory until Windows finishes closing it.
+            $childId = [int][IO.File]::ReadAllText($marker)
+            $child = Get-Process -Id $childId -ErrorAction SilentlyContinue
+            if ($null -ne $child) {
+                try {
+                    if (-not $child.WaitForExit(10000)) { throw 'The launcher test child did not exit.' }
+                }
+                finally { $child.Dispose() }
+            }
+        }
     }
     finally {
         if ($null -ne $process) { $process.Dispose() }
         foreach ($file in $launchFiles) { [IO.File]::Delete((Join-Path $fixture $file)) }
         [IO.File]::Delete($scriptPath)
-        if ([IO.Directory]::Exists($marker)) { [IO.Directory]::Delete($marker) }
+        [IO.File]::Delete($pendingMarker)
+        [IO.File]::Delete($marker)
         if ([IO.Directory]::Exists($assets)) { [IO.Directory]::Delete($assets) }
         if ([IO.Directory]::Exists($fixture)) { [IO.Directory]::Delete($fixture) }
     }
